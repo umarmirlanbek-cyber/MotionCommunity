@@ -1,0 +1,36 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyInterpreterInspection" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="fastapi" />
+          <option value="uvicorn" />
+          <option value="pymongo" />
+          <option value="httpx" />
+          <option value="pydantic" />
+          <option value="pydantic-settings" />
+          <option value="python-dotenv" />
+          <option value="sqlalchemy" />
+          <option value="psycopg2-binary" />
+          <option value="Django" />
+          <option value="djangorestframework" />
+          <option value="djangorestframework-simplejwt" />
+          <option value="django-cors-headers" />
+          <option value="drf-yasg" />
+          <option value="Pillow" />
+          <option value="asgiref" />
+          <option value="django-modeltranslation" />
+          <option value="django-phonenumber-field" />
+          <option value="phonenumbers" />
+          <option value="phonenumberslite" />
+          <option value="pillow" />
+          <option value="sqlparse" />
+          <option value="typing_extensions" />
+          <option value="tzdata" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
