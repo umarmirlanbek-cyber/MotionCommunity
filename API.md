@@ -43,19 +43,21 @@
 
 ### Личный кабинет
 
+Всё о себе, вместе с резюме, приходит одним запросом `GET me/`. Остальные адреса только добавляют, меняют и удаляют.
+
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
 | GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status` |
 | PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки |
-| DELETE | `me/` | вошедший | Удалить свой аккаунт |
+| DELETE | `me/` | вошедший | Удалить свой аккаунт. Человек пропадёт из команд и проектов |
 | POST | `me/password/` | вошедший | `{old_password, new_password}` |
-| GET, POST | `me/work/` | вошедший | Опыт работы: `{company, position, start_date, end_date, working_format, achievements}` |
-| GET, PATCH, DELETE | `me/work/{id}/` | вошедший | Одна запись (только своя) |
-| GET, POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы — числа (`2021`) |
-| GET, POST | `me/languages/` | вошедший | `{name, level}` |
-| GET, POST | `me/certificates/` | вошедший | `{title, organization, issue_date, description, image}` |
+| POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
+| PATCH, DELETE | `me/work/{id}/` | вошедший | Изменить или удалить запись (только свою) |
+| POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы — числа (`2021`) |
+| POST | `me/languages/` | вошедший | `{name, level}` |
+| POST | `me/certificates/` | вошедший | `{title, organization, issue_date, description, image}` |
 
-Для `education`, `languages` и `certificates` адрес `.../{id}/` работает так же, как у `work`.
+Для `education`, `languages` и `certificates` адрес `.../{id}/` работает так же, как у `work`: `PATCH` и `DELETE`.
 
 ### Участники (публичная витрина)
 
@@ -150,6 +152,8 @@
 | `work_user`, `education_user`, `language_user`, `certificate_user` | `work`, `education`, `languages`, `certificates` |
 | пароль в `PATCH personal-account` | `POST /api/ru/me/password/` со старым паролем |
 | `/ru/personal-account/work/` · `start_time`, `end_time` | `/api/ru/me/work/` · `start_date`, `end_date` |
+| `GET` опыта, образования, языков и сертификатов по отдельности | всё резюме приходит в `GET /api/ru/me/` |
+| `PUT` в разделах резюме | `PATCH` |
 | `educational_institution`, `responsibilities`, годы датой | `institution`, `description`, годы числом |
 | `Level`, `languages`, уровень `Родной язык` | `level`, `name`, уровень `Native` |
 | `given_date`, `text`, `certificate_image` | `issue_date`, `description`, `image` |

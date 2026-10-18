@@ -98,10 +98,15 @@ class ChangePasswordView(generics.GenericAPIView):
         return Response({'detail': 'Пароль изменён'})
 
 
-class MyResumeViewSet(viewsets.ModelViewSet):
+class MyResumeViewSet(
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
     model = None
     permission_classes = [IsAuthenticated]
-    http_method_names = ['get', 'post', 'patch', 'delete']
+    http_method_names = ['post', 'patch', 'delete']
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):

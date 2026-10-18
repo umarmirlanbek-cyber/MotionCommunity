@@ -93,9 +93,21 @@ class ResumeTests(APITestCase):
             'company': 'Motion', 'position': 'Frontend', 'start_date': '2024-09-01',
         })
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        response = self.client.get('/api/ru/me/work/')
-        self.assertEqual(response.data['count'], 1)
-        self.assertEqual(response.data['results'][0]['company'], 'Motion')
+        response = self.client.get('/api/ru/me/')
+        self.assertEqual([work['company'] for work in response.data['work']], ['Motion'])
+
+    def test_resume_is_read_from_me(self):
+        work = WorkExperience.objects.create(user=self.user, company='Motion', position='QA', start_date='2024-01-01')
+        self.assertEqual(self.client.get('/api/ru/me/work/').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(self.client.get(f'/api/ru/me/work/{work.id}/').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_edit_and_delete_own_work(self):
+        work = WorkExperience.objects.create(user=self.user, company='Motion', position='QA', start_date='2024-01-01')
+        response = self.client.patch(f'/api/ru/me/work/{work.id}/', {'position': 'Frontend'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['position'], 'Frontend')
+        self.assertEqual(self.client.delete(f'/api/ru/me/work/{work.id}/').status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(WorkExperience.objects.filter(id=work.id).exists())
 
     def test_work_end_before_start(self):
         response = self.client.post('/api/ru/me/work/', {
