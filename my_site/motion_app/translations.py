@@ -1,5 +1,5 @@
 from modeltranslation.translator import TranslationOptions, register
-from .models import UserProfile, Team, Project, ClientRequest
+from .models import UserProfile, Team, Project
 
 
 @register(UserProfile)
@@ -15,8 +15,3 @@ class TeamTranslationOptions(TranslationOptions):
 @register(Project)
 class ProjectTranslationOptions(TranslationOptions):
     fields = ('description',)
-
-
-@register(ClientRequest)
-class ClientRequestTranslationOptions(TranslationOptions):
-    fields = ('title', 'description',)

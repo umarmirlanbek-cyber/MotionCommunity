@@ -1,18 +1,24 @@
 """
 Полностью очищает БД (кроме структуры таблиц) и заполняет тестовыми данными:
-1 Admin, 2 Team Lead, 10 Developer, 5 команд, 5 проектов, 3 заявки клиентов.
+1 Admin, 2 Team Lead, 10 участников, 5 команд, 5 проектов, 3 заявки клиентов.
 
 Использование:
     python manage.py seed_data
 Каждый запуск ПОЛНОСТЬЮ пересоздаёт данные (сначала delete, потом create).
+Работает только при DEBUG=True, чтобы случайно не стереть боевую базу.
 """
 
-from django.core.management.base import BaseCommand
+from datetime import date
+
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from motion_app.models import (
-    UserProfile, Team, TeamMember, Project, ProjectMember, ClientRequest,
-    RoleChoices, MemberRoleChoices, StatusChoices,
+    UserProfile, WorkExperience, Education, Language, Team, TeamMember, Project, ProjectMember, ClientRequest
+)
+from motion_app.choices import (
+    RoleChoices, MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices
 )
 
 
@@ -21,6 +27,9 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError('seed_data стирает всю базу. Запускайте только локально, с DEBUG=True.')
+
         self.clear_all()
 
         admin = self.create_admin()
@@ -29,10 +38,11 @@ class Command(BaseCommand):
         teams = self.create_teams()
         projects = self.create_projects()
         self.distribute(leads, developers, teams, projects)
+        self.create_resume(developers[0])
         self.create_client_requests()
 
         self.stdout.write(self.style.SUCCESS(
-            f'Готово: 1 admin, {len(leads)} team lead, {len(developers)} developer, '
+            f'Готово: 1 admin, {len(leads)} team lead, {len(developers)} участников, '
             f'{len(teams)} команд, {len(projects)} проектов.'
         ))
 
@@ -55,7 +65,6 @@ class Command(BaseCommand):
             email='admin@motion.community',
             password='Admin12345!',
         )
-        user.role = RoleChoices.ADMIN
         user.status = StatusChoices.ACTIVE
         user.first_name = 'Admin'
         user.save()
@@ -75,7 +84,7 @@ class Command(BaseCommand):
                 first_name=first,
                 last_name=last,
                 position=position,
-                role=RoleChoices.TEAM_LEAD,
+                role=RoleChoices.MEMBER,
                 status=StatusChoices.ACTIVE,
                 bio=f'{first} {last} — тимлид в Motion Community, ведёт несколько проектов одновременно.',
             )
@@ -90,8 +99,8 @@ class Command(BaseCommand):
             ('dev4', 'Камила', 'Сыдыкова', 'Backend_Developer'),
             ('dev5', 'Эрлан', 'Абдразаков', 'Fullstack_Developer'),
             ('dev6', 'Жаннат', 'Мамытова', 'Fullstack_Developer'),
-            ('dev7', 'Бекзат', 'Орозалиев', 'UI/UX_Designer'),
-            ('dev8', 'Мээрим', 'Курманбекова', 'UI/UX_Designer'),
+            ('dev7', 'Бекзат', 'Орозалиев', 'UI_UX_Designer'),
+            ('dev8', 'Мээрим', 'Курманбекова', 'UI_UX_Designer'),
             ('dev9', 'Данияр', 'Сатыбалдиев', 'QA_Engineer'),
             ('dev10', 'Нургуль', 'Бекова', 'Mobile_Developer'),
         ]
@@ -104,7 +113,7 @@ class Command(BaseCommand):
                 first_name=first,
                 last_name=last,
                 position=position,
-                role=RoleChoices.DEVELOPER,
+                role=RoleChoices.MEMBER,
                 status=StatusChoices.ACTIVE,
                 bio=f'{first} {last} — участник Motion Community, специализация: {position.replace("_", " ")}.',
             )
@@ -121,7 +130,7 @@ class Command(BaseCommand):
             ('Delta Team', 'Команда аналитики и внутренних инструментов.'),
             ('Omega Team', 'Команда, работающая над маркетплейс-проектами.'),
         ]
-        return [Team.objects.create(team_name=name, description=desc) for name, desc in data]
+        return [Team.objects.create(name=name, description=desc) for name, desc in data]
 
     # ---------- Projects ----------
 
@@ -139,7 +148,7 @@ class Command(BaseCommand):
                 'Маркетплейс для продажи цифровых продуктов выпускников.'),
         ]
         return [
-            Project.objects.create(name=name, project_status=status, category=category, description=desc)
+            Project.objects.create(name=name, status=status, category=category, description=desc)
             for name, status, category, desc in data
         ]
 
@@ -152,27 +161,43 @@ class Command(BaseCommand):
             lead = leads[i % len(leads)]
             group = chunks[i]
 
+            project.team = team
+            project.save()
+
             TeamMember.objects.create(team=team, user=lead, role=MemberRoleChoices.TEAM_LEAD)
             ProjectMember.objects.create(project=project, user=lead, role=MemberRoleChoices.TEAM_LEAD)
 
             for dev in group:
-                TeamMember.objects.create(team=team, user=dev, role=MemberRoleChoices.DEVELOPER)
-                ProjectMember.objects.create(project=project, user=dev, role=MemberRoleChoices.DEVELOPER)
+                TeamMember.objects.create(team=team, user=dev, role=MemberRoleChoices.MEMBER)
+                ProjectMember.objects.create(project=project, user=dev, role=MemberRoleChoices.MEMBER)
+
+    # ---------- Резюме (одному участнику, чтобы фронту было что показать) ----------
+
+    def create_resume(self, user):
+        WorkExperience.objects.create(
+            user=user, company='Motion Web', position='Frontend Developer',
+            start_date=date(2024, 9, 1), achievements='Сделал личный кабинет участника.',
+        )
+        Education.objects.create(
+            user=user, institution='КГТУ им. Раззакова', specialization='Информатика',
+            start_year=2021, end_year=2025,
+        )
+        Language.objects.create(user=user, name='Английский', level=LanguageLevelChoices.B2)
 
     # ---------- Client requests ----------
 
     def create_client_requests(self):
         data = [
             ('Марат Осмонов', 'ТОО Финтех', 'marat@fintech.kg', '+996700123456',
-             'Нужен CRM для отдела продаж', 'CRM', 500000),
+             'Нужен CRM для отдела продаж', 'CRM', 500000, ClientStatusChoices.ACCEPTED),
             ('Айнура Дуйшеева', 'EduTech LLC', 'ainura@edutech.kg', '+996555987654',
-             'Платформа для онлайн-курсов', 'LMS', 800000),
+             'Платформа для онлайн-курсов', 'LMS', 800000, ClientStatusChoices.REVIEWING),
             ('Бакыт Жумалиев', 'ShopKG', 'bakyt@shopkg.kg', '+996700555222',
-             'Интернет-магазин с доставкой', 'E-commerce', 350000),
+             'Интернет-магазин с доставкой', 'E-commerce', 350000, ClientStatusChoices.NEW),
         ]
-        for name, company, email, phone, title, ptype, budget in data:
+        for name, company, email, phone, title, ptype, budget, status in data:
             ClientRequest.objects.create(
                 name=name, company=company, email=email, phone=phone,
                 title=title, description=f'{title} — подробности обсудим на созвоне.',
-                project_type=ptype, budget=budget,
+                project_type=ptype, budget=budget, status=status,
             )
