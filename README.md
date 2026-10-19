@@ -88,6 +88,8 @@ docker compose up -d --build
 - `web` — Django + gunicorn, сам выполнит `migrate`;
 - `nginx` — порт 80, раздаёт статику и медиа, проксирует чат на `CHAT_UPSTREAM`.
 
+Чат — отдельный сервис в той же сети `motion_network`. Он проверяет токены запросом в `http://web:8000/api/ru/auth/verify/`, поэтому в `ALLOWED_HOSTS` должен быть `web`.
+
 Создать админа: `docker compose exec web python manage.py createsuperuser`.
 Суперпользователь автоматически получает роль `Admin`.
 
