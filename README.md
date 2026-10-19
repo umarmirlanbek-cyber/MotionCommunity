@@ -76,6 +76,8 @@ python manage.py test
 
 ## Запуск в докере (сервер)
 
+Если на сервере уже работает версия из master с `db.sqlite3` — сначала [переезд на Postgres](#переезд-сервера-с-sqlite-на-postgres).
+
 ```bash
 cd my_site
 cp .env.example .env              # DEBUG=False, свои ALLOWED_HOSTS, пароли
@@ -94,3 +96,59 @@ docker compose up -d --build
 Суперпользователь автоматически получает роль `Admin`.
 
 `seed_data` на сервере не запустится: он стирает базу и работает только при `DEBUG=True`.
+
+## Переезд сервера с SQLite на Postgres
+
+В master база — файл `db.sqlite3` в папке репозитория. Здесь в докере работает Postgres, данные переносятся один раз.
+Всё выполняется на сервере в папке `my_site`.
+
+1. Остановить сайт и унести базу из папки. Именно `mv`: пока файл лежит в папке, git не переключит ветку.
+
+   ```bash
+   docker compose down
+   mv db.sqlite3 ~/motion-backup.sqlite3
+   cp ~/motion-backup.sqlite3 ~/motion-move.sqlite3
+   ```
+
+   `motion-backup` не трогаем — он для отката. Переносим из `motion-move`.
+
+2. Взять новый код: `git fetch origin && git checkout refactor/clear-structure` (когда ветку вольют — `git pull` в master).
+
+3. Дописать в `.env` по образцу `.env.example`:
+   - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`;
+   - новый `SECRET_KEY`: `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`;
+   - `DEBUG=False`, в `ALLOWED_HOSTS` — домен сайта и `web`.
+
+4. Поднять сайт с пустым Postgres, `web` сам создаст таблицы:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+5. Перенести данные:
+
+   ```bash
+   docker compose run --rm -T -e POSTGRES_HOST= -v $HOME/motion-move.sqlite3:/app/db.sqlite3 web python manage.py migrate
+   docker compose run --rm -T -e POSTGRES_HOST= -v $HOME/motion-move.sqlite3:/app/db.sqlite3 web python manage.py dumpdata --natural-foreign --natural-primary -e contenttypes -e auth.permission -e sessions > ~/motion-data.json
+   docker compose exec -T web python manage.py loaddata --format=json - < ~/motion-data.json
+   ```
+
+   Пустой `POSTGRES_HOST=` значит, что первые две команды работают со старым файлом:
+   первая переводит его на новые таблицы, вторая выгружает данные в `motion-data.json`. Третья загружает их в Postgres.
+
+6. Проверить: последняя команда пишет `Installed N object(s)`, где `N` больше нуля.
+   В админке на месте пользователи, команды, проекты и заявки.
+   Сессии не переносятся, а `SECRET_KEY` новый, поэтому всем придётся войти заново.
+   Аватары и резюме лежат в томе `media_volume`, переезд их не трогает.
+
+7. Удалить `~/motion-move.sqlite3` и `~/motion-data.json`: в них хеши паролей и контакты.
+   `~/motion-backup.sqlite3` держать, пока не убедитесь, что всё работает.
+
+Если что-то пошло не так — вернуть как было:
+
+```bash
+docker compose down
+git checkout master
+cp ~/motion-backup.sqlite3 db.sqlite3
+docker compose up -d --build
+```
