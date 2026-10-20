@@ -184,6 +184,8 @@ SWAGGER_SETTINGS = {
         'Bearer': {'type': 'apiKey', 'name': 'Authorization', 'in': 'header'},
     },
     'USE_SESSION_AUTH': False,
+    'DEFAULT_AUTO_SCHEMA_CLASS': 'motion_app.swagger.SectionAutoSchema',
+    'DOC_EXPANSION': 'none',
 }
 
 AUTH_USER_MODEL = 'motion_app.UserProfile'
