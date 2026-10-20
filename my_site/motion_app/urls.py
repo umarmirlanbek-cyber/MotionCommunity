@@ -3,45 +3,48 @@ from rest_framework import routers
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
-    CommunityStatsView,
-    CustomLoginView, LogoutView,
-    UserProfileViewSet, VerifyTokenView,
-    MemberProfileListAPIView, MemberProfileDetailAPIView,
+    LoginView, LogoutView, VerifyTokenView,
+    MeView, ChangePasswordView,
+    WorkExperienceViewSet, EducationViewSet, LanguageViewSet, CertificateViewSet,
+    MemberListAPIView, MemberDetailAPIView,
+    UserViewSet,
     TeamViewSet, TeamMemberViewSet,
     ProjectViewSet, ProjectMemberViewSet,
-    ClientRequestListCreateAPIView, ClientRequestDetailAPIView, UserProfileNameAPIView,
-    WorkExperienceAPIView, EducationAPIView, LanguagesAPIView, CertificateAPIView,
+    ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
+    CommunityStatsView, ChoicesView,
 )
 router = routers.SimpleRouter()
-router.register(r'admin/members', UserProfileViewSet, basename='admin-members')
+router.register(r'me/work', WorkExperienceViewSet, basename='me-work')
+router.register(r'me/education', EducationViewSet, basename='me-education')
+router.register(r'me/languages', LanguageViewSet, basename='me-languages')
+router.register(r'me/certificates', CertificateViewSet, basename='me-certificates')
+router.register(r'users', UserViewSet, basename='users')
 router.register(r'teams', TeamViewSet, basename='teams')
 router.register(r'projects', ProjectViewSet, basename='projects')
-router.register(r'personal-account/work', WorkExperienceAPIView, basename='work')
-router.register(r'personal-account/education', EducationAPIView, basename='education')
-router.register(r'personal-account/languages', LanguagesAPIView, basename='languages')
-router.register(r'personal-account/certificates', CertificateAPIView, basename='certificates')
 
 urlpatterns = [
-    path('', include(router.urls)),
-
-    path('stats/', CommunityStatsView.as_view()),
-
-    path('auth/login/', CustomLoginView.as_view()),
-    path('auth/login/refresh/', TokenRefreshView.as_view()),
+    path('auth/login/', LoginView.as_view()),
+    path('auth/refresh/', TokenRefreshView.as_view()),
     path('auth/logout/', LogoutView.as_view()),
     path('auth/verify/', VerifyTokenView.as_view()),
 
-    path('members/', MemberProfileListAPIView.as_view()),
-    path('members/<int:pk>/', MemberProfileDetailAPIView.as_view()),
+    path('me/', MeView.as_view()),
+    path('me/password/', ChangePasswordView.as_view()),
 
-    path('teams/<int:teamId>/members/', TeamMemberViewSet.as_view({'get': 'list', 'post': 'create'})),
-    path('teams/<int:teamId>/members/<int:userId>/', TeamMemberViewSet.as_view({'delete': 'destroy'})),
+    path('members/', MemberListAPIView.as_view()),
+    path('members/<int:pk>/', MemberDetailAPIView.as_view()),
 
-    path('projects/<int:projectId>/members/', ProjectMemberViewSet.as_view({'get': 'list', 'post': 'create'})),
-    path('projects/<int:projectId>/members/<int:userId>/', ProjectMemberViewSet.as_view({'delete': 'destroy'})),
+    path('teams/<int:team_id>/members/', TeamMemberViewSet.as_view({'get': 'list', 'post': 'create'})),
+    path('teams/<int:team_id>/members/<int:user_id>/', TeamMemberViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),
+
+    path('projects/<int:project_id>/members/', ProjectMemberViewSet.as_view({'get': 'list', 'post': 'create'})),
+    path('projects/<int:project_id>/members/<int:user_id>/', ProjectMemberViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),
 
     path('client-requests/', ClientRequestListCreateAPIView.as_view()),
     path('client-requests/<int:pk>/', ClientRequestDetailAPIView.as_view()),
 
-    path('personal-account/', UserProfileNameAPIView.as_view())
+    path('stats/', CommunityStatsView.as_view()),
+    path('choices/', ChoicesView.as_view()),
+
+    path('', include(router.urls)),
 ]

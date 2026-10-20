@@ -1,18 +1,35 @@
 services:
-  web:
-    build: .
-    command: >
-      bash -c "./manage.py collectstatic --noinput &&
-      ./manage.py migrate &&
-      gunicorn -b 0.0.0.0:8000 my_site.wsgi:application"
+  db:
+    image: postgres:16
     env_file:
       - .env
     volumes:
-      - ./db.sqlite3:/app/db.sqlite3
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - motion_network
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: >
+      bash -c "python manage.py collectstatic --noinput &&
+      python manage.py migrate &&
+      gunicorn -b 0.0.0.0:8000 -w 3 my_site.wsgi:application"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
-    ports:
-      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - motion_network
     restart: unless-stopped
@@ -21,6 +38,8 @@ services:
     build: ./nginx
     ports:
       - "80:80"
+    environment:
+      CHAT_UPSTREAM: ${CHAT_UPSTREAM:-172.31.36.238:8001}
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
@@ -31,6 +50,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres_data:
   static_volume:
   media_volume:
 
