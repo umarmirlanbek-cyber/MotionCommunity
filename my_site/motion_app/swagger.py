@@ -1,44 +1,43 @@
 from drf_yasg.inspectors import SwaggerAutoSchema
 
 TAG_NAMES = {
-    'auth': 'Вход',
-    'me': 'Личный кабинет',
-    'members': 'Участники',
-    'users': 'Пользователи (админка)',
-    'teams': 'Команды',
-    'projects': 'Проекты',
-    'client-requests': 'Заявки клиентов',
-    'choices': 'Общее',
-    'stats': 'Общее',
+    'auth': 'Auth',
+    'me': 'Me',
+    'members': 'Members',
+    'users': 'Users',
+    'teams': 'Teams',
+    'projects': 'Projects',
+    'client-requests': 'Client requests',
+    'choices': 'Common',
+    'stats': 'Common',
 }
 
-# (кого добавить/получить, чего список)
 NOUNS = {
-    'members': ('участника', 'участников'),
-    'users': ('пользователя', 'пользователей'),
-    'teams': ('команду', 'команд'),
-    'projects': ('проект', 'проектов'),
-    'client-requests': ('заявку', 'заявок'),
-    'work': ('место работы', 'мест работы'),
-    'education': ('образование', 'образований'),
-    'languages': ('язык', 'языков'),
-    'certificates': ('сертификат', 'сертификатов'),
+    'members': ('member', 'members'),
+    'users': ('user', 'users'),
+    'teams': ('team', 'teams'),
+    'projects': ('project', 'projects'),
+    'client-requests': ('client request', 'client requests'),
+    'work': ('work experience', 'work experience'),
+    'education': ('education', 'education'),
+    'languages': ('language', 'languages'),
+    'certificates': ('certificate', 'certificates'),
 }
 
 SPECIAL = {
-    'login': 'Войти',
-    'logout': 'Выйти',
-    'refresh': 'Обновить токен',
-    'verify': 'Проверить токен',
-    'choices': 'Значения для списков',
-    'stats': 'Статистика',
-    'password': 'Сменить пароль',
+    'login': 'Login',
+    'logout': 'Logout',
+    'refresh': 'Refresh token',
+    'verify': 'Verify token',
+    'choices': 'Choices',
+    'stats': 'Stats',
+    'password': 'Change password',
 }
 
 ME_ACTIONS = {
-    'read': 'Мой профиль',
-    'partial_update': 'Изменить профиль',
-    'delete': 'Удалить аккаунт',
+    'read': 'My profile',
+    'partial_update': 'Update profile',
+    'delete': 'Delete account',
 }
 
 
@@ -63,12 +62,12 @@ class SectionAutoSchema(SwaggerAutoSchema):
         if resource in NOUNS:
             single, plural = NOUNS[resource]
             verbs = {
-                'create': f'Добавить {single}',
-                'read': f'Получить {single}',
-                'partial_update': f'Изменить {single}',
-                'delete': f'Удалить {single}',
+                'create': f'Add {single}',
+                'read': f'Get {single}',
+                'partial_update': f'Update {single}',
+                'delete': f'Delete {single}',
             }
             if action == 'list':
-                return f'Список {plural}', description
+                return f'List {plural}', description
             return verbs.get(action, summary), description
         return summary, description
