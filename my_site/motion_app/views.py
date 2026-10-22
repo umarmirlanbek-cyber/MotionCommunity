@@ -13,13 +13,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
 )
-from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead
+from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
 from .serializers import (
     LoginSerializer, LogoutSerializer, ChangePasswordSerializer,
     MemberShortSerializer, MemberDetailSerializer, MeSerializer,
@@ -27,6 +27,7 @@ from .serializers import (
     WorkExperienceSerializer, EducationSerializer, LanguageSerializer, CertificateSerializer,
     TeamListSerializer, TeamDetailSerializer, TeamMemberSerializer, TeamMemberUpdateSerializer,
     ProjectListSerializer, ProjectDetailSerializer, ProjectMemberSerializer, ProjectMemberUpdateSerializer,
+    TaskListSerializer, TaskDetailSerializer, TaskCommentSerializer, MyTaskSerializer,
     ClientRequestListSerializer, ClientRequestCreateSerializer, ClientRequestDetailSerializer,
 )
 
@@ -300,6 +301,84 @@ class ProjectMemberViewSet(
         instance.delete()
 
 
+# ---------- Задачи ----------
+
+class TaskViewSet(viewsets.ModelViewSet):
+    http_method_names = ['get', 'post', 'patch', 'delete']
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['status', 'priority', 'assignee']
+    search_fields = ['title']
+
+    def get_permissions(self):
+        if self.action == 'destroy':
+            return [IsAdminOrProjectTeamLead()]
+        return [IsAdminOrProjectMember()]
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return TaskListSerializer
+        return TaskDetailSerializer
+
+    def get_queryset(self):
+        return Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related(
+            'assignee', 'author'
+        ).prefetch_related('comments__author')
+
+    def perform_create(self, serializer):
+        project = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        serializer.save(project=project, author=self.request.user)
+
+    def perform_update(self, serializer):
+        task = serializer.instance
+        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
+        if not is_lead and self.request.user.id not in (task.assignee_id, task.author_id):
+            raise PermissionDenied('Менять можно только свои задачи')
+        serializer.save()
+
+
+class TaskCommentViewSet(
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    serializer_class = TaskCommentSerializer
+    permission_classes = [IsAdminOrProjectMember]
+    http_method_names = ['post', 'patch', 'delete']
+
+    def get_queryset(self):
+        return TaskComment.objects.filter(
+            task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
+        ).select_related('author')
+
+    def perform_create(self, serializer):
+        task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
+        serializer.save(task=task, author=self.request.user)
+
+    def perform_update(self, serializer):
+        if serializer.instance.author_id != self.request.user.id:
+            raise PermissionDenied('Менять можно только свой комментарий')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
+        if not is_lead and instance.author_id != self.request.user.id:
+            raise PermissionDenied('Удалить чужой комментарий может только Admin или тимлид')
+        instance.delete()
+
+
+class MyTaskListAPIView(generics.ListAPIView):
+    serializer_class = MyTaskSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'priority']
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Task.objects.none()
+        return Task.objects.filter(assignee=self.request.user).select_related('assignee', 'project')
+
+
 # ---------- Заявки клиентов ----------
 
 class ClientRequestListCreateAPIView(generics.ListCreateAPIView):
@@ -362,6 +441,8 @@ class ChoicesView(APIView):
             'positions': choices_to_list(PositionChoices),
             'member_roles': choices_to_list(MemberRoleChoices),
             'project_statuses': choices_to_list(ProjectStatusChoices),
+            'task_statuses': choices_to_list(TaskStatusChoices),
+            'task_priorities': choices_to_list(TaskPriorityChoices),
             'client_request_statuses': choices_to_list(ClientStatusChoices),
             'working_formats': choices_to_list(WorkingFormatChoices),
             'language_levels': choices_to_list(LanguageLevelChoices),

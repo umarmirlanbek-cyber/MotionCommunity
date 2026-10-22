@@ -7,6 +7,7 @@ TAG_NAMES = {
     'users': 'Users',
     'teams': 'Teams',
     'projects': 'Projects',
+    'tasks': 'Tasks',
     'client-requests': 'Client requests',
     'choices': 'Common',
     'stats': 'Common',
@@ -24,6 +25,9 @@ NOUNS = {
     'certificates': ('certificate', 'certificates'),
     'teams/members': ('team member', 'team members'),
     'projects/members': ('project member', 'project members'),
+    'tasks': ('task', 'tasks'),
+    'comments': ('comment', 'comments'),
+    'me/tasks': ('my task', 'my tasks'),
 }
 
 SPECIAL = {
@@ -47,6 +51,8 @@ class SectionAutoSchema(SwaggerAutoSchema):
     def get_tags(self, operation_keys=None):
         operation_keys = operation_keys or self.operation_keys
         section = operation_keys[1] if len(operation_keys) > 1 else operation_keys[0]
+        if 'tasks' in operation_keys:
+            section = 'tasks'
         return [TAG_NAMES.get(section, section)]
 
     def get_summary_and_description(self):

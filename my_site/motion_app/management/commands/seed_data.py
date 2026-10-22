@@ -1,6 +1,6 @@
 """
 Полностью очищает БД (кроме структуры таблиц) и заполняет тестовыми данными:
-1 Admin, 2 Team Lead, 10 участников, 5 команд, 5 проектов, 3 заявки клиентов.
+1 Admin, 2 Team Lead, 10 участников, 5 команд, 5 проектов, задачи в первом проекте, 3 заявки клиентов.
 
 Использование:
     python manage.py seed_data
@@ -15,10 +15,12 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from motion_app.models import (
-    UserProfile, WorkExperience, Education, Language, Team, TeamMember, Project, ProjectMember, ClientRequest
+    UserProfile, WorkExperience, Education, Language, Team, TeamMember, Project, ProjectMember,
+    Task, TaskComment, ClientRequest
 )
 from motion_app.choices import (
-    RoleChoices, MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices
+    RoleChoices, MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices,
+    TaskStatusChoices, TaskPriorityChoices
 )
 
 
@@ -39,6 +41,7 @@ class Command(BaseCommand):
         projects = self.create_projects()
         self.distribute(leads, developers, teams, projects)
         self.create_resume(developers[0])
+        self.create_tasks(projects[0])
         self.create_client_requests()
 
         self.stdout.write(self.style.SUCCESS(
@@ -50,6 +53,8 @@ class Command(BaseCommand):
 
     def clear_all(self):
         ClientRequest.objects.all().delete()
+        TaskComment.objects.all().delete()
+        Task.objects.all().delete()
         ProjectMember.objects.all().delete()
         TeamMember.objects.all().delete()
         Project.objects.all().delete()
@@ -183,6 +188,26 @@ class Command(BaseCommand):
             start_year=2021, end_year=2025,
         )
         Language.objects.create(user=user, name='Английский', level=LanguageLevelChoices.B2)
+
+    # ---------- Задачи (доска одного проекта) ----------
+
+    def create_tasks(self, project):
+        members = [member.user for member in project.members.order_by('id')]
+        lead = members[0]
+        data = [
+            ('Сверстать страницу курса', TaskStatusChoices.TO_DO, TaskPriorityChoices.MEDIUM),
+            ('Тесты для модуля оплаты', TaskStatusChoices.TO_DO, TaskPriorityChoices.LOW),
+            ('API списка уроков', TaskStatusChoices.IN_PROGRESS, TaskPriorityChoices.HIGH),
+            ('Вход через Google', TaskStatusChoices.REVIEW, TaskPriorityChoices.MEDIUM),
+            ('Настроить CI', TaskStatusChoices.DONE, TaskPriorityChoices.CRITICAL),
+        ]
+        for i, (title, task_status, priority) in enumerate(data):
+            task = Task.objects.create(
+                project=project, title=title, status=task_status, priority=priority,
+                assignee=members[i % len(members)], author=lead,
+            )
+            if task_status == TaskStatusChoices.REVIEW:
+                TaskComment.objects.create(task=task, author=lead, text='Посмотрю сегодня вечером.')
 
     # ---------- Client requests ----------
 
