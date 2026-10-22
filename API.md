@@ -108,17 +108,135 @@
 | GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?assignee=`, `?search=` (название) |
 | POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
 | GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` |
-| PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили — `{status, order}` |
+| PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили - `{status, order}` |
 | DELETE | `projects/{project_id}/tasks/{id}/` | Admin или тимлид проекта | |
 | POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
 | PATCH | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор комментария | `{text}` |
 | DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
 | GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=` |
 
-- Статусы: `To_do` → `In_progress` → `Review` → `Done`. Приоритеты: `Low`, `Medium`, `High`, `Critical`.
-- Исполнитель (`assignee_id`) должен состоять в проекте, иначе `400`.
-- Порядок карточек в колонке — `order` по возрастанию, его ставит фронт.
-- Список приходит страницами, поэтому для доски удобно запрашивать каждую колонку отдельно: `?status=To_do`.
+#### Колонки и приоритеты
+
+Берутся из `GET choices/`:
+
+- `task_statuses`: `To_do`, `In_progress`, `Review`, `Done`
+- `task_priorities`: `Low`, `Medium`, `High`, `Critical`
+
+Каждый элемент - `{value, label}`, в `label` подпись по-русски.
+
+#### Доска проекта
+
+`GET projects/{project_id}/tasks/`. Видят участники проекта и Admin, остальным `403`.
+
+Фильтры: `?status=To_do`, `?priority=High`, `?assignee=4` (id пользователя), `?search=` (по названию).
+Ответ приходит страницами по 20, следующая страница - `?page=2`. Поэтому доску удобнее грузить четырьмя запросами, по одному на колонку: `?status=To_do`, `?status=In_progress` и т. д.
+Внутри колонки задачи отсортированы по `order`, при равном `order` - по `id`.
+
+```json
+{
+  "count": 2, "next": null, "previous": null,
+  "results": [
+    {
+      "id": 1,
+      "title": "Сверстать страницу курса",
+      "status": "To_do",
+      "priority": "Medium",
+      "assignee": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "avatar": null},
+      "due_date": null,
+      "order": 0
+    }
+  ]
+}
+```
+
+`assignee` бывает `null`, если задача ни на кого не назначена.
+
+#### Создать задачу
+
+`POST projects/{project_id}/tasks/`. Может любой участник проекта.
+
+```json
+{
+  "title": "Форма регистрации",
+  "description": "Поля: имя, почта, пароль",
+  "status": "To_do",
+  "priority": "High",
+  "assignee_id": 4,
+  "due_date": "2026-11-01",
+  "order": 0
+}
+```
+
+Обязательно только `title`. По умолчанию `status: To_do`, `priority: Medium`, `order: 0`.
+`assignee_id` - только участник этого проекта, иначе `400`. Список участников отдаёт `GET projects/{id}/members/`.
+Автор ставится сам, это тот, кто создал задачу. В ответ приходит `201` и задача целиком, как в карточке.
+
+#### Карточка задачи
+
+`GET projects/{project_id}/tasks/{id}/`
+
+```json
+{
+  "id": 6,
+  "title": "Форма регистрации",
+  "description": "Поля: имя, почта, пароль",
+  "status": "In_progress",
+  "priority": "High",
+  "assignee": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+  "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+  "due_date": "2026-11-01",
+  "order": 1,
+  "created_at": "2026-10-22T13:42:40+06:00",
+  "updated_at": "2026-10-22T13:42:40+06:00",
+  "comments": [
+    {
+      "id": 2,
+      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "text": "Начал, сегодня закончу",
+      "created_at": "2026-10-22T13:42:40+06:00"
+    }
+  ]
+}
+```
+
+У `assignee` и `author` те же поля, что у участника: `id, first_name, last_name, position, avatar`. `author` бывает `null`, если его аккаунт удалили.
+
+#### Изменить или перетащить
+
+`PATCH projects/{project_id}/tasks/{id}/`. Отправляем только то, что поменялось:
+
+- перетащили карточку: `{"status": "In_progress", "order": 1}`
+- переназначили: `{"assignee_id": 7}`, сняли исполнителя: `{"assignee_id": null}`
+- поправили текст: `{"title": "...", "description": "..."}`
+
+Менять задачу могут Admin, тимлид проекта, исполнитель или автор задачи. Остальные получат `403` `{"detail": "Менять можно только свои задачи"}`, тогда карточку надо вернуть на место.
+Соседние карточки бэкенд сам не перенумеровывает. Совет: при создании ставьте `order` с шагом 1000 (1000, 2000, 3000). Тогда для вставки между двумя карточками хватит одного `PATCH` с числом посередине.
+В ответ приходит `200` и задача целиком.
+
+#### Удалить
+
+`DELETE projects/{project_id}/tasks/{id}/` → `204` без тела. Удалять могут только Admin и тимлид проекта.
+Роль пользователя в проекте есть в `GET me/` → `projects[].role` (`Team_Lead` или `Member`), по ней можно прятать кнопки.
+
+#### Комментарии
+
+- добавить: `POST projects/{project_id}/tasks/{task_id}/comments/` с `{"text": "..."}` → `201` `{id, author, text, created_at}`. Может любой участник проекта.
+- изменить: `PATCH .../comments/{id}/` с `{"text": "..."}` → `200`. Только автор комментария.
+- удалить: `DELETE .../comments/{id}/` → `204`. Автор, тимлид или Admin.
+
+Отдельного адреса для списка комментариев нет: они приходят в карточке задачи, старые сверху.
+
+#### Мои задачи
+
+`GET me/tasks/` - задачи, где я исполнитель, во всех проектах. Фильтры `?status=`, `?priority=`.
+Поля как на доске плюс `"project": {"id": 1, "name": "Motion LMS Platform"}`.
+
+#### Ошибки
+
+- `400`: `{"поле": ["что не так"]}`, например `{"title": ["Обязательное поле."]}` или `{"assignee_id": ["Исполнитель должен состоять в проекте"]}`
+- `401`: токена нет или он истёк. Обновить токен можно через `auth/refresh/`.
+- `403`: `{"detail": "..."}`, пользователь не участник проекта или ему не хватает прав.
+- `404`: задачи нет или она из другого проекта.
 
 ### Заявки клиентов
 
