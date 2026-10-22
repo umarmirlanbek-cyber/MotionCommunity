@@ -1,36 +1,36 @@
-# API Motion Community — памятка для фронта
+# API Motion Community - памятка для фронта
 
 Живая документация с кнопкой «попробовать»: **`/api/docs/`** (Swagger).
 Нажмите **Authorize** и вставьте `Bearer <access-токен>`.
 
 ## 8 правил
 
-1. **Адрес = `/api/{язык}/...`**, язык — `ru` или `en`. Пример: `/api/ru/projects/`, `/api/en/projects/`.
+1. **Адрес = `/api/{язык}/...`**, язык - `ru` или `en`. Пример: `/api/ru/projects/`, `/api/en/projects/`.
    Редиректов нет. От языка зависят только переводимые поля: `bio`, `description` у команд и проектов.
    Если английского текста нет, придёт русский.
 2. **Вход:** `POST /api/ru/auth/login/` → `access` и `refresh`.
    Дальше в каждом запросе заголовок `Authorization: Bearer <access>`.
-   `access` живёт 30 минут, `refresh` — 7 дней. Новый `access`: `POST /api/ru/auth/refresh/` с `{"refresh": "..."}`.
+   `access` живёт 30 минут, `refresh` - 7 дней. Новый `access`: `POST /api/ru/auth/refresh/` с `{"refresh": "..."}`.
 3. **Любой список приходит страницами:**
    `{"count": 42, "next": "...?page=2", "previous": null, "results": [...]}`.
-   На странице 20 записей, следующая — `?page=2`.
+   На странице 20 записей, следующая - `?page=2`.
 4. **Ошибки всегда одной формы:**
-   - `400` — `{"имя_поля": ["что не так"]}`
-   - `401`, `403`, `404` — `{"detail": "что не так"}`
-   - `429` — слишком много запросов, подождите
+   - `400` - `{"имя_поля": ["что не так"]}`
+   - `401`, `403`, `404` - `{"detail": "что не так"}`
+   - `429` - слишком много запросов, подождите
 5. **Связи:** отправляете `что-то_id`, получаете `что-то` объектом.
-   Отправили `{"user_id": 5}` — получили `{"user": {"id": 5, "first_name": "...", ...}}`.
+   Отправили `{"user_id": 5}` - получили `{"user": {"id": 5, "first_name": "...", ...}}`.
 6. **Значения для выпадающих списков** (должности, статусы, роли) не хардкодим: `GET /api/ru/choices/`.
 7. **Файлы** (аватар, резюме, картинки) отправляются через `multipart/form-data`.
-   Резюме — только `pdf`, `doc`, `docx`. Любой файл — до 5 МБ.
+   Резюме - только `pdf`, `doc`, `docx`. Любой файл - до 5 МБ.
 8. **Роли простые:**
-   - `Admin` — может всё;
-   - `Member` — обычный участник;
-   - `Team_Lead` — роль только внутри конкретной команды или проекта.
+   - `Admin` - может всё;
+   - `Member` - обычный участник;
+   - `Team_Lead` - роль только внутри конкретной команды или проекта.
 
 ## Все адреса
 
-Ниже пути после `/api/{язык}/`. «Все» — без входа. «Вошедший» — с токеном.
+Ниже пути после `/api/{язык}/`. «Все» - без входа. «Вошедший» - с токеном.
 
 ### Вход
 
@@ -39,7 +39,7 @@
 | POST | `auth/login/` | все | `{username, password}` → `{access, refresh, user: {id, username, role, status}}`. Не больше 10 попыток в минуту |
 | POST | `auth/refresh/` | все | `{refresh}` → `{access}` |
 | POST | `auth/logout/` | вошедший | `{refresh}` → `205` |
-| GET | `auth/verify/` | вошедший | `{id, username, role}` — для сервиса чата |
+| GET | `auth/verify/` | вошедший | `{id, username, role}` - для сервиса чата |
 
 ### Личный кабинет
 
@@ -53,7 +53,7 @@
 | POST | `me/password/` | вошедший | `{old_password, new_password}` |
 | POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
 | PATCH, DELETE | `me/work/{id}/` | вошедший | Изменить или удалить запись (только свою) |
-| POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы — числа (`2021`) |
+| POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы - числа (`2021`) |
 | POST | `me/languages/` | вошедший | `{name, level}` |
 | POST | `me/certificates/` | вошедший | `{title, organization, issue_date, description, image}` |
 
@@ -71,8 +71,8 @@
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
 | GET | `users/` | Admin | Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
-| POST | `users/` | Admin | `{username, password, role}` — выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` — заблокировать без удаления |
+| POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления |
 
 ### Команды
 
@@ -250,7 +250,7 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании — только по принятым заявкам |
+| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании - только по принятым заявкам |
 | GET | `choices/` | все | Все варианты выбора: `[{value, label}]` |
 
 ## Пример ответа
@@ -282,7 +282,7 @@
 
 | Было | Стало |
 | --- | --- |
-| `/ru/...` (без префикса — редирект 302) | `/api/ru/...`, редиректов нет |
+| `/ru/...` (без префикса - редирект 302) | `/api/ru/...`, редиректов нет |
 | `user.login` в ответе входа и в админских списках | `username` |
 | `/ru/auth/login/refresh/` | `/api/ru/auth/refresh/` |
 | `/ru/admin/members/` (не работал) | `/api/ru/users/` |
@@ -300,7 +300,7 @@
 | `project_status`, `preview_image`, `?project_status=` | `status`, `image`, `?status=` |
 | в составе команды `user: 5` | `user: {id, first_name, last_name, position, avatar}`, отправлять `user_id` |
 | у проекта `team: 1` | `team: {id, name, image}`, отправлять `team_id` |
-| глобальные роли `Team_Lead`, `Developer` | `Member` (тимлид — только внутри команды/проекта) |
+| глобальные роли `Team_Lead`, `Developer` | `Member` (тимлид - только внутри команды/проекта) |
 | роль в команде `Developer` | `Member` |
 | должность `UI/UX_Designer` | `UI_UX_Designer` |
 | статусы заявки `New`, `Reviewing` | плюс `Accepted`, `Rejected` |

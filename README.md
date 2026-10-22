@@ -1,9 +1,9 @@
-# Motion Community — бэкенд
+# Motion Community - бэкенд
 
 Сайт сообщества Motion: участники и их резюме, команды, проекты с доской задач и заявки от клиентов.
 Django 6.1 + Django REST Framework + JWT.
 
-Фронту читать **[API.md](API.md)** — там все адреса и правила.
+Фронту читать **[API.md](API.md)** - там все адреса и правила.
 
 ## Где что лежит
 
@@ -44,10 +44,10 @@ my_site/
 
 ## Обновление существующей базы
 
-Миграции продолжают миграции master (`0001`–`0004`). Перед обновлением сделайте копию базы, потом выполните `python manage.py migrate`:
+Миграции продолжают миграции master (`0001`-`0004`). Перед обновлением сделайте копию базы, потом выполните `python manage.py migrate`:
 
 - поля переименуются, данные и id пользователей останутся;
-- суперпользователи получат роль `Admin`, все остальные — `Member`;
+- суперпользователи получат роль `Admin`, все остальные - `Member`;
 - роль `Developer` в командах и проектах станет `Member`;
 - годы учёбы превратятся в числа.
 
@@ -65,7 +65,7 @@ python manage.py runserver
 ```
 
 Swagger: http://127.0.0.1:8000/api/docs/, админка: http://127.0.0.1:8000/admin/.
-Локально база — SQLite, ничего настраивать не нужно.
+Локально база - SQLite, ничего настраивать не нужно.
 
 ## Тесты
 
@@ -76,7 +76,7 @@ python manage.py test
 
 ## Запуск в докере (сервер)
 
-Если на сервере уже работает версия из master с `db.sqlite3` — сначала [переезд на Postgres](#переезд-сервера-с-sqlite-на-postgres).
+Если на сервере уже работает версия из master с `db.sqlite3` - сначала [переезд на Postgres](#переезд-сервера-с-sqlite-на-postgres).
 
 ```bash
 cd my_site
@@ -86,11 +86,11 @@ docker compose up -d --build
 
 Поднимутся три контейнера:
 
-- `db` — Postgres;
-- `web` — Django + gunicorn, сам выполнит `migrate`;
-- `nginx` — порт 80, раздаёт статику и медиа, проксирует чат на `CHAT_UPSTREAM`.
+- `db` - Postgres;
+- `web` - Django + gunicorn, сам выполнит `migrate`;
+- `nginx` - порт 80, раздаёт статику и медиа, проксирует чат на `CHAT_UPSTREAM`.
 
-Чат — отдельный сервис в той же сети `motion_network`. Он проверяет токены запросом в `http://web:8000/api/ru/auth/verify/`, поэтому в `ALLOWED_HOSTS` должен быть `web`.
+Чат - отдельный сервис в той же сети `motion_network`. Он проверяет токены запросом в `http://web:8000/api/ru/auth/verify/`, поэтому в `ALLOWED_HOSTS` должен быть `web`.
 
 Создать админа: `docker compose exec web python manage.py createsuperuser`.
 Суперпользователь автоматически получает роль `Admin`.
@@ -99,7 +99,7 @@ docker compose up -d --build
 
 ## Переезд сервера с SQLite на Postgres
 
-В master база — файл `db.sqlite3` в папке репозитория. Здесь в докере работает Postgres, данные переносятся один раз.
+В master база - файл `db.sqlite3` в папке репозитория. Здесь в докере работает Postgres, данные переносятся один раз.
 Всё выполняется на сервере в папке `my_site`.
 
 1. Остановить сайт и унести базу из папки. Именно `mv`: пока файл лежит в папке, git не переключит ветку.
@@ -110,14 +110,14 @@ docker compose up -d --build
    cp ~/motion-backup.sqlite3 ~/motion-move.sqlite3
    ```
 
-   `motion-backup` не трогаем — он для отката. Переносим из `motion-move`.
+   `motion-backup` не трогаем - он для отката. Переносим из `motion-move`.
 
-2. Взять новый код: `git fetch origin && git checkout refactor/clear-structure` (когда ветку вольют — `git pull` в master).
+2. Взять новый код: `git fetch origin && git checkout refactor/clear-structure` (когда ветку вольют - `git pull` в master).
 
 3. Дописать в `.env` по образцу `.env.example`:
    - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`;
    - новый `SECRET_KEY`: `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`;
-   - `DEBUG=False`, в `ALLOWED_HOSTS` — домен сайта и `web`.
+   - `DEBUG=False`, в `ALLOWED_HOSTS` - домен сайта и `web`.
 
 4. Поднять сайт с пустым Postgres, `web` сам создаст таблицы:
 
@@ -144,7 +144,7 @@ docker compose up -d --build
 7. Удалить `~/motion-move.sqlite3` и `~/motion-data.json`: в них хеши паролей и контакты.
    `~/motion-backup.sqlite3` держать, пока не убедитесь, что всё работает.
 
-Если что-то пошло не так — вернуть как было:
+Если что-то пошло не так - вернуть как было:
 
 ```bash
 docker compose down
