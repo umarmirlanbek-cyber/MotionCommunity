@@ -32,6 +32,20 @@ class ProjectStatusChoices(models.TextChoices):
     PAUSED = 'Paused', 'На паузе'
 
 
+class TaskStatusChoices(models.TextChoices):
+    TO_DO = 'To_do', 'К выполнению'
+    IN_PROGRESS = 'In_progress', 'В работе'
+    REVIEW = 'Review', 'На проверке'
+    DONE = 'Done', 'Готово'
+
+
+class TaskPriorityChoices(models.TextChoices):
+    LOW = 'Low', 'Низкий'
+    MEDIUM = 'Medium', 'Средний'
+    HIGH = 'High', 'Высокий'
+    CRITICAL = 'Critical', 'Критический'
+
+
 class ClientStatusChoices(models.TextChoices):
     NEW = 'New', 'Новая'
     REVIEWING = 'Reviewing', 'На рассмотрении'

@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .choices import StatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
 )
 
 
@@ -279,6 +279,12 @@ class ProjectMemberUpdateSerializer(serializers.ModelSerializer):
         fields = ('user', 'role')
 
 
+class ProjectShortSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Project
+        fields = ('id', 'name')
+
+
 class ProjectListSerializer(serializers.ModelSerializer):
     team = TeamShortSerializer(read_only=True)
 
@@ -300,6 +306,53 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'status', 'category', 'image',
             'demo_url', 'github_url', 'created_at', 'team', 'team_id', 'members',
         )
+
+
+# ---------- Задачи ----------
+
+class TaskCommentSerializer(serializers.ModelSerializer):
+    author = MemberShortSerializer(read_only=True)
+
+    class Meta:
+        model = TaskComment
+        fields = ('id', 'author', 'text', 'created_at')
+
+
+class TaskListSerializer(serializers.ModelSerializer):
+    assignee = MemberShortSerializer(read_only=True)
+
+    class Meta:
+        model = Task
+        fields = ('id', 'title', 'status', 'priority', 'assignee', 'due_date', 'order')
+
+
+class TaskDetailSerializer(serializers.ModelSerializer):
+    assignee = MemberShortSerializer(read_only=True)
+    assignee_id = serializers.PrimaryKeyRelatedField(
+        source='assignee', queryset=UserProfile.objects.all(), write_only=True, required=False, allow_null=True
+    )
+    author = MemberShortSerializer(read_only=True)
+    comments = TaskCommentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Task
+        fields = (
+            'id', 'title', 'description', 'status', 'priority', 'assignee', 'assignee_id', 'author',
+            'due_date', 'order', 'created_at', 'updated_at', 'comments',
+        )
+
+    def validate_assignee_id(self, user):
+        project_id = self.context['view'].kwargs['project_id']
+        if user and not ProjectMember.objects.filter(project_id=project_id, user=user).exists():
+            raise serializers.ValidationError('Исполнитель должен состоять в проекте')
+        return user
+
+
+class MyTaskSerializer(TaskListSerializer):
+    project = ProjectShortSerializer(read_only=True)
+
+    class Meta(TaskListSerializer.Meta):
+        fields = TaskListSerializer.Meta.fields + ('project',)
 
 
 # ---------- Заявки клиентов ----------

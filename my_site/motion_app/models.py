@@ -5,7 +5,7 @@ from django.core.validators import FileExtensionValidator
 from phonenumber_field.modelfields import PhoneNumberField
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
 )
 
 
@@ -185,6 +185,43 @@ class ProjectMember(models.Model):
 
     def __str__(self):
         return f'{self.user} - {self.project}'
+
+
+# ---------- Задачи ----------
+
+class Task(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='tasks')
+    title = models.CharField('Название', max_length=255)
+    description = models.TextField('Описание', blank=True)
+    status = models.CharField(max_length=20, choices=TaskStatusChoices.choices, default=TaskStatusChoices.TO_DO)
+    priority = models.CharField(max_length=20, choices=TaskPriorityChoices.choices, default=TaskPriorityChoices.MEDIUM)
+    assignee = models.ForeignKey(
+        UserProfile, on_delete=models.SET_NULL, related_name='assigned_tasks', null=True, blank=True
+    )
+    author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='created_tasks', null=True)
+    due_date = models.DateField('Срок', null=True, blank=True)
+    order = models.PositiveIntegerField('Порядок в колонке', default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return self.title
+
+
+class TaskComment(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_comments', null=True)
+    text = models.TextField('Текст')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.author} - {self.task}'
 
 
 # ---------- Заявки клиентов ----------

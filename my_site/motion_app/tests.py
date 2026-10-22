@@ -3,8 +3,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .choices import RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices
-from .models import UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, ClientRequest
+from .choices import RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices
+from .models import (
+    UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
+)
 
 
 def make_user(username, role=RoleChoices.MEMBER, user_status=StatusChoices.ACTIVE, **kwargs):
@@ -354,6 +356,132 @@ class ProjectMemberTests(APITestCase):
         self.client.force_authenticate(self.outsider)
         response = self.client.post(self.url, {'user_id': self.outsider.id})
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+# ---------- Задачи ----------
+
+class TaskTests(APITestCase):
+    def setUp(self):
+        self.admin = make_user('admin', role=RoleChoices.ADMIN)
+        self.lead = make_user('lead1')
+        self.member = make_user('dev1')
+        self.other_member = make_user('dev2')
+        self.outsider = make_user('dev3')
+        self.project = Project.objects.create(name='LMS', description='d', category='Web')
+        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
+        ProjectMember.objects.create(project=self.project, user=self.member)
+        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        self.task = Task.objects.create(project=self.project, title='API уроков', assignee=self.member, author=self.lead)
+        self.url = f'/api/ru/projects/{self.project.id}/tasks/'
+
+    def test_only_project_members_see_tasks(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.member)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['assignee']['id'], self.member.id)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+
+    def test_member_creates_task(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.post(self.url, {'title': 'Вход через Google', 'assignee_id': self.other_member.id})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], TaskStatusChoices.TO_DO)
+        self.assertEqual(response.data['author']['id'], self.member.id)
+        self.assertEqual(response.data['assignee']['id'], self.other_member.id)
+
+    def test_assignee_must_be_in_project(self):
+        self.client.force_authenticate(self.lead)
+        response = self.client.post(self.url, {'title': 'Вход через Google', 'assignee_id': self.outsider.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('assignee_id', response.data)
+
+    def test_assignee_moves_own_task(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'status': TaskStatusChoices.IN_PROGRESS, 'order': 2})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], TaskStatusChoices.IN_PROGRESS)
+
+    def test_member_cannot_edit_someone_elses_task(self):
+        self.client.force_authenticate(self.other_member)
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'status': TaskStatusChoices.DONE})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.lead)
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': self.other_member.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_only_admin_or_lead_deletes(self):
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.delete(f'{self.url}{self.task.id}/').status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.delete(f'{self.url}{self.task.id}/').status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_task_from_another_project_not_found(self):
+        other = Project.objects.create(name='Shop', description='d', category='Web')
+        ProjectMember.objects.create(project=other, user=self.outsider)
+        self.client.force_authenticate(self.outsider)
+        response = self.client.get(f'/api/ru/projects/{other.id}/tasks/{self.task.id}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_filter_by_status(self):
+        Task.objects.create(project=self.project, title='CI', status=TaskStatusChoices.DONE)
+        self.client.force_authenticate(self.member)
+        response = self.client.get(self.url, {'status': TaskStatusChoices.DONE})
+        self.assertEqual([task['title'] for task in response.data['results']], ['CI'])
+
+    def test_my_tasks(self):
+        other = Project.objects.create(name='Shop', description='d', category='Web')
+        Task.objects.create(project=other, title='Корзина', assignee=self.member)
+        Task.objects.create(project=self.project, title='Чужая', assignee=self.other_member)
+        self.client.force_authenticate(self.member)
+        response = self.client.get('/api/ru/me/tasks/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            sorted((task['title'], task['project']['name']) for task in response.data['results']),
+            [('API уроков', 'LMS'), ('Корзина', 'Shop')],
+        )
+
+
+class TaskCommentTests(APITestCase):
+    def setUp(self):
+        self.lead = make_user('lead1')
+        self.member = make_user('dev1')
+        self.other_member = make_user('dev2')
+        self.outsider = make_user('dev3')
+        self.project = Project.objects.create(name='LMS', description='d', category='Web')
+        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
+        ProjectMember.objects.create(project=self.project, user=self.member)
+        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        self.task = Task.objects.create(project=self.project, title='API уроков')
+        self.url = f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/comments/'
+
+    def test_member_comments_and_sees_it_in_task(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.post(self.url, {'text': 'Начал'})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        response = self.client.get(f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/')
+        self.assertEqual(response.data['comments'][0]['author']['id'], self.member.id)
+
+    def test_outsider_cannot_comment(self):
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.post(self.url, {'text': 'Привет'}).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_only_author_edits_comment(self):
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='Начал')
+        self.client.force_authenticate(self.other_member)
+        self.assertEqual(self.client.patch(f'{self.url}{comment.id}/', {'text': 'X'}).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.patch(f'{self.url}{comment.id}/', {'text': 'Готово'}).status_code, status.HTTP_200_OK)
+
+    def test_lead_deletes_someone_elses_comment(self):
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='Начал')
+        self.client.force_authenticate(self.other_member)
+        self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_204_NO_CONTENT)
 
 
 # ---------- Заявки клиентов ----------

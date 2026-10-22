@@ -99,6 +99,27 @@
 | GET | `projects/{project_id}/members/` | все | Состав |
 | POST, PATCH, DELETE | `projects/{project_id}/members/...` | как у команд | Правила те же, что у команд |
 
+### Задачи
+
+Доска задач проекта, как в Jira. Видят задачи и создают их только участники проекта и Admin.
+
+| Метод | Путь | Кто | Что |
+| --- | --- | --- | --- |
+| GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?assignee=`, `?search=` (название) |
+| POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
+| GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` |
+| PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили — `{status, order}` |
+| DELETE | `projects/{project_id}/tasks/{id}/` | Admin или тимлид проекта | |
+| POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
+| PATCH | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор комментария | `{text}` |
+| DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
+| GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=` |
+
+- Статусы: `To_do` → `In_progress` → `Review` → `Done`. Приоритеты: `Low`, `Medium`, `High`, `Critical`.
+- Исполнитель (`assignee_id`) должен состоять в проекте, иначе `400`.
+- Порядок карточек в колонке — `order` по возрастанию, его ставит фронт.
+- Список приходит страницами, поэтому для доски удобно запрашивать каждую колонку отдельно: `?status=To_do`.
+
 ### Заявки клиентов
 
 | Метод | Путь | Кто | Что |

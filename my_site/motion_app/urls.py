@@ -10,6 +10,7 @@ from .views import (
     UserViewSet,
     TeamViewSet, TeamMemberViewSet,
     ProjectViewSet, ProjectMemberViewSet,
+    TaskViewSet, TaskCommentViewSet, MyTaskListAPIView,
     ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
     CommunityStatsView, ChoicesView,
 )
@@ -30,6 +31,7 @@ urlpatterns = [
 
     path('me/', MeView.as_view()),
     path('me/password/', ChangePasswordView.as_view()),
+    path('me/tasks/', MyTaskListAPIView.as_view()),
 
     path('members/', MemberListAPIView.as_view()),
     path('members/<int:pk>/', MemberDetailAPIView.as_view()),
@@ -39,6 +41,11 @@ urlpatterns = [
 
     path('projects/<int:project_id>/members/', ProjectMemberViewSet.as_view({'get': 'list', 'post': 'create'})),
     path('projects/<int:project_id>/members/<int:user_id>/', ProjectMemberViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),
+
+    path('projects/<int:project_id>/tasks/', TaskViewSet.as_view({'get': 'list', 'post': 'create'})),
+    path('projects/<int:project_id>/tasks/<int:pk>/', TaskViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'})),
+    path('projects/<int:project_id>/tasks/<int:task_id>/comments/', TaskCommentViewSet.as_view({'post': 'create'})),
+    path('projects/<int:project_id>/tasks/<int:task_id>/comments/<int:pk>/', TaskCommentViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),
 
     path('client-requests/', ClientRequestListCreateAPIView.as_view()),
     path('client-requests/<int:pk>/', ClientRequestDetailAPIView.as_view()),

@@ -38,3 +38,14 @@ class IsAdminOrProjectTeamLead(BasePermission):
         return ProjectMember.objects.filter(
             project_id=project_id, user=user, role=MemberRoleChoices.TEAM_LEAD
         ).exists()
+
+
+class IsAdminOrProjectMember(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.role == RoleChoices.ADMIN:
+            return True
+
+        return ProjectMember.objects.filter(project_id=view.kwargs.get('project_id'), user=user).exists()
