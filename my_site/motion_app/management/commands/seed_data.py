@@ -91,7 +91,7 @@ class Command(BaseCommand):
                 position=position,
                 role=RoleChoices.MEMBER,
                 status=StatusChoices.ACTIVE,
-                bio=f'{first} {last} — тимлид в Motion Community, ведёт несколько проектов одновременно.',
+                bio=f'{first} {last} - тимлид в Motion Community, ведёт несколько проектов одновременно.',
             )
             leads.append(user)
         return leads
@@ -120,7 +120,7 @@ class Command(BaseCommand):
                 position=position,
                 role=RoleChoices.MEMBER,
                 status=StatusChoices.ACTIVE,
-                bio=f'{first} {last} — участник Motion Community, специализация: {position.replace("_", " ")}.',
+                bio=f'{first} {last} - участник Motion Community, специализация: {position.replace("_", " ")}.',
             )
             developers.append(user)
         return developers
@@ -223,6 +223,6 @@ class Command(BaseCommand):
         for name, company, email, phone, title, ptype, budget, status in data:
             ClientRequest.objects.create(
                 name=name, company=company, email=email, phone=phone,
-                title=title, description=f'{title} — подробности обсудим на созвоне.',
+                title=title, description=f'{title} - подробности обсудим на созвоне.',
                 project_type=ptype, budget=budget, status=status,
             )
