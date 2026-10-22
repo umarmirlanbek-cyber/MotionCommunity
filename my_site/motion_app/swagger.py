@@ -22,6 +22,8 @@ NOUNS = {
     'education': ('education', 'education'),
     'languages': ('language', 'languages'),
     'certificates': ('certificate', 'certificates'),
+    'teams/members': ('team member', 'team members'),
+    'projects/members': ('project member', 'project members'),
 }
 
 SPECIAL = {
@@ -54,6 +56,8 @@ class SectionAutoSchema(SwaggerAutoSchema):
 
         keys = self.operation_keys
         action, resource = keys[-1], keys[-2]
+        if len(keys) > 2 and f'{keys[-3]}/{resource}' in NOUNS:
+            resource = f'{keys[-3]}/{resource}'
 
         if resource in SPECIAL:
             return SPECIAL[resource], description
