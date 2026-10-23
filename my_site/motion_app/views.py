@@ -1,3 +1,4 @@
+from django.db import DatabaseError, connection
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -447,3 +448,15 @@ class ChoicesView(APIView):
             'working_formats': choices_to_list(WorkingFormatChoices),
             'language_levels': choices_to_list(LanguageLevelChoices),
         })
+
+
+class HealthView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+        except DatabaseError:
+            return Response({'status': 'db_error'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'status': 'ok'})

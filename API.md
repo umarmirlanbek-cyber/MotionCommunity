@@ -252,6 +252,7 @@
 | --- | --- | --- | --- |
 | GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании - только по принятым заявкам |
 | GET | `choices/` | все | Все варианты выбора: `[{value, label}]` |
+| GET | `health/` | все | `{"status": "ok"}` или `503`, если база недоступна. Для проверки сервера |
 
 ## Пример ответа
 

@@ -103,6 +103,10 @@ docker compose up -d --build
 
 Чат - отдельный сервис в той же сети `motion_network`. Он проверяет токены запросом в `http://web:8000/api/ru/auth/verify/`, поэтому в `ALLOWED_HOSTS` должен быть `web`.
 
+`docker compose ps` показывает у `web` состояние `healthy`, если Django отвечает и база доступна (адрес `/api/ru/health/`).
+Проверка ходит на `web`, поэтому `web` в `ALLOWED_HOSTS` нужен и для неё.
+Ошибки 500 с полным трейсбеком: `docker compose logs web`.
+
 Создать админа: `docker compose exec web python manage.py createsuperuser`.
 Суперпользователь автоматически получает роль `Admin`.
 

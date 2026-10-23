@@ -11,6 +11,7 @@ TAG_NAMES = {
     'client-requests': 'Client requests',
     'choices': 'Common',
     'stats': 'Common',
+    'health': 'Common',
 }
 
 NOUNS = {
@@ -38,6 +39,7 @@ SPECIAL = {
     'choices': 'Choices',
     'stats': 'Stats',
     'password': 'Change password',
+    'health': 'Health check',
 }
 
 ME_ACTIONS = {

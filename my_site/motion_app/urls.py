@@ -12,7 +12,7 @@ from .views import (
     ProjectViewSet, ProjectMemberViewSet,
     TaskViewSet, TaskCommentViewSet, MyTaskListAPIView,
     ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
-    CommunityStatsView, ChoicesView,
+    CommunityStatsView, ChoicesView, HealthView,
 )
 router = routers.SimpleRouter()
 router.register(r'me/work', WorkExperienceViewSet, basename='me-work')
@@ -52,6 +52,7 @@ urlpatterns = [
 
     path('stats/', CommunityStatsView.as_view()),
     path('choices/', ChoicesView.as_view()),
+    path('health/', HealthView.as_view()),
 
     path('', include(router.urls)),
 ]

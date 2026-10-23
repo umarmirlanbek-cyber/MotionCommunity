@@ -550,6 +550,13 @@ class ChoicesTests(APITestCase):
         self.assertIn({'value': 'UI_UX_Designer', 'label': 'UI/UX Designer'}, response.data['positions'])
 
 
+class HealthTests(APITestCase):
+    def test_health(self):
+        response = self.client.get('/api/ru/health/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {'status': 'ok'})
+
+
 class DocsTests(APITestCase):
     def test_swagger_works(self):
         response = self.client.get('/api/docs.json')
