@@ -108,12 +108,14 @@
 | GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, type, labels, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?type=`, `?label=`, `?assignee=`, `?search=` (название) |
 | POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, type, labels, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
 | GET | `projects/{project_id}/tasks/labels/` | участник проекта | Все метки задач проекта: `["backend", "frontend"]` |
-| GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` + `history` |
+| GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` + `attachments` + `history` |
 | PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили - `{status, order}` |
 | DELETE | `projects/{project_id}/tasks/{id}/` | Admin или тимлид проекта | |
 | POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
 | PATCH | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор комментария | `{text}` |
 | DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
+| POST | `projects/{project_id}/tasks/{task_id}/attachments/` | участник проекта | `multipart/form-data` с полем `file` |
+| DELETE | `projects/{project_id}/tasks/{task_id}/attachments/{id}/` | автор файла, Admin или тимлид проекта | |
 | GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=`, `?type=` |
 
 #### Колонки, приоритеты и типы
@@ -204,6 +206,15 @@
       "created_at": "2026-10-22T13:42:40+06:00"
     }
   ],
+  "attachments": [
+    {
+      "id": 1,
+      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "file": "https://<домен>/media/task_files/screen.png",
+      "name": "screen.png",
+      "created_at": "2026-10-22T14:01:02+06:00"
+    }
+  ],
   "history": [
     {
       "id": 3,
@@ -267,6 +278,15 @@
 - удалить: `DELETE .../comments/{id}/` → `204`. Автор, тимлид или Admin.
 
 Отдельного адреса для списка комментариев нет: они приходят в карточке задачи, старые сверху.
+
+#### Вложения
+
+- загрузить: `POST projects/{project_id}/tasks/{task_id}/attachments/`, `multipart/form-data` с полем `file` → `201` `{id, author, file, name, created_at}`. Может любой участник проекта.
+- форматы: `png`, `jpg`, `jpeg`, `gif`, `webp`, `pdf`, `doc`, `docx`, `xls`, `xlsx`, `txt`, `zip`, до 5 МБ. Остальное → `400`.
+- удалить: `DELETE .../attachments/{id}/` → `204`. Автор файла, тимлид или Admin. Файл удаляется и с диска.
+
+Список приходит в карточке задачи, в поле `attachments`. `file` - полная ссылка, `name` - имя файла для показа.
+Картинки можно показывать через `<img src>`. Если открыть ссылку напрямую, браузер файл скачает, а не откроет.
 
 #### Мои задачи
 

@@ -7,6 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,7 +21,7 @@ from .choices import (
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, Notification, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification, ClientRequest
 )
 from .filters import TaskFilter
 from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
@@ -31,7 +32,8 @@ from .serializers import (
     WorkExperienceSerializer, EducationSerializer, LanguageSerializer, CertificateSerializer,
     TeamListSerializer, TeamDetailSerializer, TeamMemberSerializer, TeamMemberUpdateSerializer,
     ProjectListSerializer, ProjectDetailSerializer, ProjectMemberSerializer, ProjectMemberUpdateSerializer,
-    TaskListSerializer, TaskDetailSerializer, TaskCommentSerializer, MyTaskSerializer, NotificationSerializer,
+    TaskListSerializer, TaskDetailSerializer, TaskCommentSerializer, TaskAttachmentSerializer, MyTaskSerializer,
+    NotificationSerializer,
     ClientRequestListSerializer, ClientRequestCreateSerializer, ClientRequestDetailSerializer,
 )
 
@@ -349,7 +351,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related(
             'assignee', 'author'
-        ).prefetch_related('comments__author', 'history__user')
+        ).prefetch_related('comments__author', 'attachments__author', 'history__user')
 
     def perform_create(self, serializer):
         project = get_object_or_404(Project, pk=self.kwargs['project_id'])
@@ -414,6 +416,32 @@ class TaskCommentViewSet(
         is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
         if not is_lead and instance.author_id != self.request.user.id:
             raise PermissionDenied('Удалить чужой комментарий может только Admin или тимлид')
+        instance.delete()
+
+
+class TaskAttachmentViewSet(
+    mixins.CreateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    serializer_class = TaskAttachmentSerializer
+    permission_classes = [IsAdminOrProjectMember]
+    parser_classes = [MultiPartParser]
+    http_method_names = ['post', 'delete']
+
+    def get_queryset(self):
+        return TaskAttachment.objects.filter(
+            task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
+        ).select_related('author')
+
+    def perform_create(self, serializer):
+        task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
+        serializer.save(task=task, author=self.request.user)
+
+    def perform_destroy(self, instance):
+        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
+        if not is_lead and instance.author_id != self.request.user.id:
+            raise PermissionDenied('Удалить чужой файл может только Admin или тимлид')
         instance.delete()
 
 

@@ -3,6 +3,8 @@ from django.contrib.auth.models import AbstractUser, UserManager
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from phonenumber_field.modelfields import PhoneNumberField
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
@@ -11,6 +13,7 @@ from .choices import (
 
 
 MAX_FILE_SIZE_MB = 5
+ATTACHMENT_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'zip']
 
 
 def validate_file_size(file):
@@ -225,6 +228,27 @@ class TaskComment(models.Model):
 
     def __str__(self):
         return f'{self.author} - {self.task}'
+
+
+class TaskAttachment(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='attachments')
+    author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_attachments', null=True)
+    file = models.FileField(
+        'Файл', upload_to='task_files/',
+        validators=[FileExtensionValidator(ATTACHMENT_EXTENSIONS), validate_file_size],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return self.file.name
+
+
+@receiver(post_delete, sender=TaskAttachment)
+def delete_attachment_file(sender, instance, **kwargs):
+    instance.file.delete(save=False)
 
 
 class TaskHistory(models.Model):

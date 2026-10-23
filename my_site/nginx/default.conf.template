@@ -43,6 +43,12 @@ server {
         add_header Content-Disposition attachment;
     }
 
+    location /media/task_files/ {
+        alias /app/media/task_files/;
+        add_header X-Content-Type-Options nosniff;
+        add_header Content-Disposition attachment;
+    }
+
     location / {
         proxy_pass http://web:8000;
 

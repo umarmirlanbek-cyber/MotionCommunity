@@ -1,3 +1,5 @@
+import os
+
 from django.contrib.auth.password_validation import validate_password
 from django.db import IntegrityError
 from rest_framework import serializers
@@ -5,7 +7,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .choices import StatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, Notification, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification, ClientRequest
 )
 
 
@@ -318,6 +320,18 @@ class TaskCommentSerializer(serializers.ModelSerializer):
         fields = ('id', 'author', 'text', 'created_at')
 
 
+class TaskAttachmentSerializer(serializers.ModelSerializer):
+    author = MemberShortSerializer(read_only=True)
+    name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskAttachment
+        fields = ('id', 'author', 'file', 'name', 'created_at')
+
+    def get_name(self, attachment):
+        return os.path.basename(attachment.file.name)
+
+
 class TaskHistorySerializer(serializers.ModelSerializer):
     user = MemberShortSerializer(read_only=True)
 
@@ -342,13 +356,14 @@ class TaskDetailSerializer(serializers.ModelSerializer):
     labels = serializers.ListField(child=serializers.CharField(max_length=50), max_length=10, required=False)
     author = MemberShortSerializer(read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
+    attachments = TaskAttachmentSerializer(many=True, read_only=True)
     history = TaskHistorySerializer(many=True, read_only=True)
 
     class Meta:
         model = Task
         fields = (
             'id', 'title', 'description', 'status', 'priority', 'type', 'labels', 'assignee', 'assignee_id', 'author',
-            'due_date', 'order', 'created_at', 'updated_at', 'comments', 'history',
+            'due_date', 'order', 'created_at', 'updated_at', 'comments', 'attachments', 'history',
         )
 
     def validate_assignee_id(self, user):

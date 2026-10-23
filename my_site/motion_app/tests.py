@@ -1,5 +1,9 @@
+import os
+import tempfile
+
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -8,8 +12,8 @@ from .choices import (
     NotificationTypeChoices,
 )
 from .models import (
-    UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory,
-    Notification, ClientRequest,
+    UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
+    TaskHistory, Notification, ClientRequest,
 )
 
 
@@ -533,6 +537,49 @@ class TaskCommentTests(APITestCase):
         self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_403_FORBIDDEN)
         self.client.force_authenticate(self.lead)
         self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_204_NO_CONTENT)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class TaskAttachmentTests(APITestCase):
+    def setUp(self):
+        self.lead = make_user('lead1')
+        self.member = make_user('dev1')
+        self.other_member = make_user('dev2')
+        self.outsider = make_user('dev3')
+        self.project = Project.objects.create(name='LMS', description='d', category='Web')
+        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
+        ProjectMember.objects.create(project=self.project, user=self.member)
+        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        self.task = Task.objects.create(project=self.project, title='API уроков')
+        self.task_url = f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/'
+        self.url = f'{self.task_url}attachments/'
+
+    def upload(self, name='screen.png'):
+        return self.client.post(self.url, {'file': SimpleUploadedFile(name, b'data')}, format='multipart')
+
+    def test_member_uploads_and_sees_it_in_task(self):
+        self.client.force_authenticate(self.member)
+        response = self.upload()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        attachment = self.client.get(self.task_url).data['attachments'][0]
+        self.assertEqual(attachment['name'], 'screen.png')
+        self.assertEqual(attachment['author']['id'], self.member.id)
+
+    def test_wrong_type_and_outsider(self):
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.upload('page.html').status_code, status.HTTP_400_BAD_REQUEST)
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.upload().status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_removes_file(self):
+        self.client.force_authenticate(self.member)
+        attachment = TaskAttachment.objects.get(pk=self.upload().data['id'])
+        path = attachment.file.path
+        self.client.force_authenticate(self.other_member)
+        self.assertEqual(self.client.delete(f'{self.url}{attachment.id}/').status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.delete(f'{self.url}{attachment.id}/').status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(os.path.exists(path))
 
 
 class NotificationTests(APITestCase):
