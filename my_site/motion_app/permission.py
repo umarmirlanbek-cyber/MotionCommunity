@@ -12,7 +12,7 @@ class IsAdmin(BasePermission):
         return bool(
             request.user and
             request.user.is_authenticated and
-            request.user.role == RoleChoices.ADMIN
+            is_admin(request.user)
         )
 
 
@@ -21,7 +21,7 @@ class IsAdminOrTeamLead(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.role == RoleChoices.ADMIN:
+        if is_admin(user):
             return True
 
         team_id = view.kwargs.get('team_id')
@@ -35,7 +35,7 @@ class IsAdminOrProjectTeamLead(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.role == RoleChoices.ADMIN:
+        if is_admin(user):
             return True
 
         project_id = view.kwargs.get('project_id') or view.kwargs.get('pk')
@@ -49,7 +49,7 @@ class IsAdminOrProjectMember(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.role == RoleChoices.ADMIN:
+        if is_admin(user):
             return True
 
         return ProjectMember.objects.filter(project_id=view.kwargs.get('project_id'), user=user).exists()

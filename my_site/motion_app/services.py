@@ -6,7 +6,7 @@ from .choices import NotificationTypeChoices
 from .models import UserProfile, TaskHistory, Notification
 
 TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
-MENTION_RE = re.compile(r'@([\w.+-]+)')
+MENTION_RE = re.compile(r'(?<!\w)@([\w.+-]+)')
 TASK_FILE_LINK_MAX_AGE = 60 * 60
 task_file_signer = TimestampSigner(salt='task-file')
 
@@ -18,6 +18,10 @@ def history_value(task, field):
     if field == 'labels':
         value = ', '.join(value)
     return str(value)[:255]
+
+
+def compared_value(task, field):
+    return getattr(task, 'assignee_id' if field == 'assignee' else field)
 
 
 def notify(users, actor, task, notification_type, comment=None):
@@ -35,9 +39,12 @@ def task_created(task, actor):
 
 def task_changed(old, task, actor):
     TaskHistory.objects.bulk_create([
-        TaskHistory(task=task, user=actor, field=field, old_value=old_value, new_value=new_value)
+        TaskHistory(
+            task=task, user=actor, field=field,
+            old_value=history_value(old, field), new_value=history_value(task, field),
+        )
         for field in TASK_HISTORY_FIELDS
-        if (old_value := history_value(old, field)) != (new_value := history_value(task, field))
+        if compared_value(old, field) != compared_value(task, field)
     ])
     if task.assignee_id != old.assignee_id:
         notify([task.assignee], actor, task, NotificationTypeChoices.ASSIGNED)

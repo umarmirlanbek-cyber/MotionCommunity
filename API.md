@@ -316,6 +316,7 @@
 - `Assigned` - меня назначили исполнителем: при создании задачи или при смене `assignee_id`.
 - `Comment` - новый комментарий в задаче, где я исполнитель или автор.
 - `Mention` - меня упомянули в комментарии через `@логин`. Срабатывает только для участников проекта.
+  `@` должна стоять в начале текста или после пробела, скобки, запятой: адрес почты `support@team.dev` упоминанием не считается.
   Если меня упомянули, `Comment` на тот же комментарий уже не придёт.
 
 Себе уведомления не приходят: сам назначил себя или сам написал комментарий - ничего не будет.
@@ -344,7 +345,7 @@
 | POST | `client-requests/` | все | `{name, company, email, phone, title, description, project_type, budget}`. Не больше 10 в час с одного адреса |
 | GET | `client-requests/` | Admin | `?status=`, `?search=` |
 | GET, PATCH | `client-requests/{id}/` | Admin | Поменять `status`: `New` → `Reviewing` → `Accepted` или `Rejected`. В ответе `project: {id, name}` или `null` |
-| POST | `client-requests/{id}/project/` | Admin | Создать проект из заявки, тело не нужно. Название берётся из `title`, описание из `description`, категория из `project_type`. Заявка станет `Accepted`. Ответ `201` - проект, как в `GET projects/{id}/`. Второй раз → `400` |
+| POST | `client-requests/{id}/project/` | Admin | Создать проект из заявки, тело не нужно. Название берётся из `title`, описание из `description`, категория из `project_type`. Заявка станет `Accepted`. Ответ `201` - проект, как в `GET projects/{id}/`. Второй раз или по заявке `Rejected` → `400` |
 
 Команду, участников и картинку созданному проекту ставят обычным `PATCH projects/{id}/`.
 

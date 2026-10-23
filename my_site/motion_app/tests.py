@@ -487,6 +487,15 @@ class TaskTests(ProjectTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['history'][-1]['new_value']), 255)
 
+    def test_namesake_reassign_goes_to_history(self):
+        namesake = make_user('dev4', first_name='Азамат')
+        ProjectMember.objects.create(project=self.project, user=namesake)
+        self.member.first_name = 'Азамат'
+        self.member.save()
+        self.client.force_authenticate(self.lead)
+        self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': namesake.id})
+        self.assertEqual(list(TaskHistory.objects.values_list('field', flat=True)), ['assignee'])
+
     def test_admin_site_changes_go_to_history(self):
         request = RequestFactory().post('/admin/')
         request.user = self.admin
@@ -503,9 +512,10 @@ class TaskTests(ProjectTestCase):
         self.client.force_authenticate(self.member)
         card_url = f'{self.url}{self.task.id}/'
 
-        def count(url):
+        def count(url, method='get'):
+            self.client.force_authenticate(self.lead if method == 'patch' else self.member)
             with CaptureQueriesContext(connection) as queries:
-                self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+                self.assertEqual(getattr(self.client, method)(url).status_code, status.HTTP_200_OK)
             return len(queries)
 
         def add_activity(times):
@@ -520,11 +530,17 @@ class TaskTests(ProjectTestCase):
                 )
 
         add_activity(1)
+        project_url = f'/api/ru/projects/{self.project.id}/'
         board, card, notifications = count(self.url), count(card_url), count('/api/ru/me/notifications/')
+        card_patch, project_patch = count(card_url, 'patch'), count(project_url, 'patch')
         add_activity(10)
+        for user in (make_user('dev4'), make_user('dev5')):
+            ProjectMember.objects.create(project=self.project, user=user)
         self.assertEqual(count(self.url), board)
         self.assertEqual(count(card_url), card)
         self.assertEqual(count('/api/ru/me/notifications/'), notifications)
+        self.assertEqual(count(card_url, 'patch'), card_patch)
+        self.assertEqual(count(project_url, 'patch'), project_patch)
 
     def test_type_and_labels(self):
         self.client.force_authenticate(self.member)
@@ -684,10 +700,16 @@ class NotificationTests(ProjectTestCase):
         self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.MENTION])
         self.assertEqual(self.received(self.outsider), [])
 
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': 'Пиши на support@dev2 или (@dev3)'})
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.MENTION])
+
         self.client.force_authenticate(self.other_member)
         self.client.post(f'{self.url}{task.id}/comments/', {'text': 'Готово'})
         self.assertEqual(self.received(self.member), [NotificationTypeChoices.COMMENT])
-        self.assertEqual(self.received(self.lead), [NotificationTypeChoices.COMMENT, NotificationTypeChoices.MENTION])
+        self.assertEqual(
+            self.received(self.lead),
+            [NotificationTypeChoices.COMMENT, NotificationTypeChoices.COMMENT, NotificationTypeChoices.MENTION],
+        )
 
     def test_my_notifications(self):
         task = Task.objects.create(project=self.project, title='API')
@@ -760,6 +782,15 @@ class ClientRequestTests(MotionTestCase):
 
         self.assertEqual(self.client.post(url).status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Project.objects.count(), 1)
+
+    def test_rejected_request_cannot_become_project(self):
+        request = ClientRequest.objects.create(status=ClientStatusChoices.REJECTED, **REQUEST_DATA)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f'/api/ru/client-requests/{request.id}/project/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        request.refresh_from_db()
+        self.assertEqual(request.status, ClientStatusChoices.REJECTED)
+        self.assertFalse(Project.objects.exists())
 
     def test_requests_are_limited(self):
         for _ in range(10):

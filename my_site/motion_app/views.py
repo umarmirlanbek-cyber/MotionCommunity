@@ -2,7 +2,7 @@ from copy import copy
 
 from django.core.signing import BadSignature, SignatureExpired
 from django.db import DatabaseError, connection, transaction
-from django.db.models import Count
+from django.db.models import CharField, Count, F, Func
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -214,6 +214,10 @@ class TeamViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.prefetch_related('members__user', 'projects')
 
+    def perform_update(self, serializer):
+        team = serializer.save()
+        serializer.instance = self.get_queryset().get(pk=team.pk)
+
 
 class GroupMemberViewSet(
     mixins.ListModelMixin,
@@ -300,6 +304,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return self.queryset
         return self.queryset.prefetch_related('members__user')
 
+    def perform_update(self, serializer):
+        project = serializer.save()
+        serializer.instance = self.get_queryset().get(pk=project.pk)
+
 
 class ProjectMemberViewSet(GroupMemberViewSet):
     queryset = ProjectMember.objects.all()
@@ -334,8 +342,12 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related('assignee')
-        if self.action == 'list':
-            return queryset
+        if self.action == 'retrieve':
+            return self.with_details(queryset)
+        return queryset
+
+    @staticmethod
+    def with_details(queryset):
         return queryset.select_related('author').prefetch_related(
             'comments__author', 'attachments__author', 'history__user'
         )
@@ -349,14 +361,17 @@ class TaskViewSet(viewsets.ModelViewSet):
         old = copy(serializer.instance)
         task = serializer.save()
         task_changed(old, task, self.request.user)
+        serializer.instance = self.with_details(self.get_queryset()).get(pk=task.pk)
 
 
 class TaskLabelListAPIView(APIView):
     permission_classes = [IsAdminOrProjectMember]
 
     def get(self, request, *args, **kwargs):
-        labels = Task.objects.filter(project_id=self.kwargs['project_id']).values_list('labels', flat=True)
-        return Response(sorted({label for task_labels in labels for label in task_labels}))
+        labels = Task.objects.filter(project_id=self.kwargs['project_id']).annotate(
+            label=Func(F('labels'), function='unnest', output_field=CharField())
+        ).values_list('label', flat=True).distinct().order_by('label')
+        return Response(list(labels))
 
 
 class TaskCommentViewSet(
@@ -500,6 +515,8 @@ class ClientRequestProjectView(APIView):
             client_request = get_object_or_404(ClientRequest.objects.select_for_update(), pk=kwargs['pk'])
             if client_request.project_id:
                 return Response({'detail': 'По этой заявке проект уже создан'}, status=status.HTTP_400_BAD_REQUEST)
+            if client_request.status == ClientStatusChoices.REJECTED:
+                return Response({'detail': 'Заявка отклонена'}, status=status.HTTP_400_BAD_REQUEST)
             project = Project.objects.create(
                 name=client_request.title,
                 description=client_request.description,
