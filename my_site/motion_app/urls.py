@@ -11,6 +11,7 @@ from .views import (
     TeamViewSet, TeamMemberViewSet,
     ProjectViewSet, ProjectMemberViewSet,
     TaskViewSet, TaskLabelListAPIView, TaskCommentViewSet, MyTaskListAPIView,
+    NotificationViewSet, NotificationReadAllView,
     ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
     CommunityStatsView, ChoicesView, HealthView,
 )
@@ -19,6 +20,7 @@ router.register(r'me/work', WorkExperienceViewSet, basename='me-work')
 router.register(r'me/education', EducationViewSet, basename='me-education')
 router.register(r'me/languages', LanguageViewSet, basename='me-languages')
 router.register(r'me/certificates', CertificateViewSet, basename='me-certificates')
+router.register(r'me/notifications', NotificationViewSet, basename='me-notifications')
 router.register(r'users', UserViewSet, basename='users')
 router.register(r'teams', TeamViewSet, basename='teams')
 router.register(r'projects', ProjectViewSet, basename='projects')
@@ -32,6 +34,7 @@ urlpatterns = [
     path('me/', MeView.as_view()),
     path('me/password/', ChangePasswordView.as_view()),
     path('me/tasks/', MyTaskListAPIView.as_view()),
+    path('me/notifications/read-all/', NotificationReadAllView.as_view()),
 
     path('members/', MemberListAPIView.as_view()),
     path('members/<int:pk>/', MemberDetailAPIView.as_view()),

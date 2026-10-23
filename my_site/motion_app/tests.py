@@ -4,11 +4,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .choices import (
-    RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices
+    RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
+    NotificationTypeChoices,
 )
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory,
-    ClientRequest,
+    Notification, ClientRequest,
 )
 
 
@@ -532,6 +533,67 @@ class TaskCommentTests(APITestCase):
         self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_403_FORBIDDEN)
         self.client.force_authenticate(self.lead)
         self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_204_NO_CONTENT)
+
+
+class NotificationTests(APITestCase):
+    def setUp(self):
+        self.lead = make_user('lead1')
+        self.member = make_user('dev1')
+        self.other_member = make_user('dev2')
+        self.outsider = make_user('dev3')
+        self.project = Project.objects.create(name='LMS', description='d', category='Web')
+        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
+        ProjectMember.objects.create(project=self.project, user=self.member)
+        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        self.url = f'/api/ru/projects/{self.project.id}/tasks/'
+
+    def received(self, user):
+        return list(Notification.objects.filter(user=user).values_list('type', flat=True))
+
+    def test_assignee_is_notified(self):
+        self.client.force_authenticate(self.lead)
+        task_id = self.client.post(self.url, {'title': 'API', 'assignee_id': self.member.id}).data['id']
+        self.client.post(self.url, {'title': 'Себе', 'assignee_id': self.lead.id})
+        self.client.patch(f'{self.url}{task_id}/', {'assignee_id': self.other_member.id})
+        self.client.patch(f'{self.url}{task_id}/', {'title': 'API уроков'})
+        self.assertEqual(self.received(self.member), [NotificationTypeChoices.ASSIGNED])
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.ASSIGNED])
+        self.assertEqual(self.received(self.lead), [])
+
+    def test_comment_and_mention(self):
+        task = Task.objects.create(project=self.project, title='API', assignee=self.member, author=self.lead)
+        self.client.force_authenticate(self.member)
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': '@dev2, @dev3 и @lead1. гляньте'})
+        self.assertEqual(self.received(self.member), [])
+        self.assertEqual(self.received(self.lead), [NotificationTypeChoices.MENTION])
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.MENTION])
+        self.assertEqual(self.received(self.outsider), [])
+
+        self.client.force_authenticate(self.other_member)
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': 'Готово'})
+        self.assertEqual(self.received(self.member), [NotificationTypeChoices.COMMENT])
+        self.assertEqual(self.received(self.lead), [NotificationTypeChoices.COMMENT, NotificationTypeChoices.MENTION])
+
+    def test_my_notifications(self):
+        task = Task.objects.create(project=self.project, title='API')
+        mine = Notification.objects.create(user=self.member, actor=self.lead, task=task, type=NotificationTypeChoices.ASSIGNED)
+        Notification.objects.create(user=self.member, actor=self.lead, task=task, type=NotificationTypeChoices.COMMENT)
+        others = Notification.objects.create(user=self.lead, task=task, type=NotificationTypeChoices.COMMENT)
+
+        self.client.force_authenticate(self.member)
+        response = self.client.get('/api/ru/me/notifications/', {'is_read': 'false'})
+        self.assertEqual(response.data['count'], 2)
+        self.assertEqual(response.data['results'][1]['task']['project']['id'], self.project.id)
+
+        response = self.client.patch(f'/api/ru/me/notifications/{mine.id}/', {'is_read': True, 'type': 'Mention'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['type'], NotificationTypeChoices.ASSIGNED)
+        self.assertEqual(self.client.get('/api/ru/me/notifications/', {'is_read': 'false'}).data['count'], 1)
+        self.assertEqual(self.client.patch(f'/api/ru/me/notifications/{others.id}/', {'is_read': True}).status_code, 404)
+
+        self.assertEqual(self.client.post('/api/ru/me/notifications/read-all/').data, {'updated': 1})
+        others.refresh_from_db()
+        self.assertFalse(others.is_read)
 
 
 # ---------- Заявки клиентов ----------

@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .choices import StatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, Notification, ClientRequest
 )
 
 
@@ -366,6 +366,33 @@ class MyTaskSerializer(TaskListSerializer):
 
     class Meta(TaskListSerializer.Meta):
         fields = TaskListSerializer.Meta.fields + ('project',)
+
+
+# ---------- Уведомления ----------
+
+class NotificationTaskSerializer(serializers.ModelSerializer):
+    project = ProjectShortSerializer(read_only=True)
+
+    class Meta:
+        model = Task
+        fields = ('id', 'title', 'project')
+
+
+class NotificationCommentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskComment
+        fields = ('id', 'text')
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    actor = MemberShortSerializer(read_only=True)
+    task = NotificationTaskSerializer(read_only=True)
+    comment = NotificationCommentSerializer(read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = ('id', 'type', 'actor', 'task', 'comment', 'is_read', 'created_at')
+        read_only_fields = ('type', 'created_at')
 
 
 # ---------- Заявки клиентов ----------

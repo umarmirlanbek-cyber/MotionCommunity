@@ -1,3 +1,5 @@
+import re
+
 from django.db import DatabaseError, connection
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
@@ -14,11 +16,11 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, Notification, ClientRequest
 )
 from .filters import TaskFilter
 from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
@@ -29,7 +31,7 @@ from .serializers import (
     WorkExperienceSerializer, EducationSerializer, LanguageSerializer, CertificateSerializer,
     TeamListSerializer, TeamDetailSerializer, TeamMemberSerializer, TeamMemberUpdateSerializer,
     ProjectListSerializer, ProjectDetailSerializer, ProjectMemberSerializer, ProjectMemberUpdateSerializer,
-    TaskListSerializer, TaskDetailSerializer, TaskCommentSerializer, MyTaskSerializer,
+    TaskListSerializer, TaskDetailSerializer, TaskCommentSerializer, MyTaskSerializer, NotificationSerializer,
     ClientRequestListSerializer, ClientRequestCreateSerializer, ClientRequestDetailSerializer,
 )
 
@@ -317,6 +319,17 @@ def history_value(task, field):
     return str(value)[:255]
 
 
+MENTION_RE = re.compile(r'@([\w.+-]+)')
+
+
+def notify(users, actor, task, notification_type, comment=None):
+    recipients = {user.id: user for user in users if user and user.id != actor.id}
+    Notification.objects.bulk_create([
+        Notification(user=user, actor=actor, task=task, type=notification_type, comment=comment)
+        for user in recipients.values()
+    ])
+
+
 class TaskViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -340,7 +353,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         project = get_object_or_404(Project, pk=self.kwargs['project_id'])
-        serializer.save(project=project, author=self.request.user)
+        task = serializer.save(project=project, author=self.request.user)
+        notify([task.assignee], self.request.user, task, NotificationTypeChoices.ASSIGNED)
 
     def perform_update(self, serializer):
         task = serializer.instance
@@ -348,7 +362,10 @@ class TaskViewSet(viewsets.ModelViewSet):
         if not is_lead and self.request.user.id not in (task.assignee_id, task.author_id):
             raise PermissionDenied('Менять можно только свои задачи')
         old = {field: history_value(task, field) for field in TASK_HISTORY_FIELDS}
+        old_assignee_id = task.assignee_id
         serializer.save()
+        if task.assignee_id != old_assignee_id:
+            notify([task.assignee], self.request.user, task, NotificationTypeChoices.ASSIGNED)
         TaskHistory.objects.bulk_create([
             TaskHistory(task=task, user=self.request.user, field=field, old_value=old[field], new_value=new)
             for field in TASK_HISTORY_FIELDS
@@ -381,7 +398,12 @@ class TaskCommentViewSet(
 
     def perform_create(self, serializer):
         task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
-        serializer.save(task=task, author=self.request.user)
+        comment = serializer.save(task=task, author=self.request.user)
+        names = {name.rstrip('.') for name in MENTION_RE.findall(comment.text)}
+        mentioned = list(UserProfile.objects.filter(username__in=names, project_memberships__project=task.project))
+        notify(mentioned, self.request.user, task, NotificationTypeChoices.MENTION, comment)
+        others = [user for user in (task.assignee, task.author) if user not in mentioned]
+        notify(others, self.request.user, task, NotificationTypeChoices.COMMENT, comment)
 
     def perform_update(self, serializer):
         if serializer.instance.author_id != self.request.user.id:
@@ -405,6 +427,29 @@ class MyTaskListAPIView(generics.ListAPIView):
         if getattr(self, 'swagger_fake_view', False):
             return Task.objects.none()
         return Task.objects.filter(assignee=self.request.user).select_related('assignee', 'project')
+
+
+# ---------- Уведомления ----------
+
+class NotificationViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'patch']
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['is_read', 'type']
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Notification.objects.none()
+        return Notification.objects.filter(user=self.request.user).select_related('actor', 'task__project', 'comment')
+
+
+class NotificationReadAllView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        updated = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({'updated': updated})
 
 
 # ---------- Заявки клиентов ----------
@@ -472,6 +517,7 @@ class ChoicesView(APIView):
             'task_statuses': choices_to_list(TaskStatusChoices),
             'task_priorities': choices_to_list(TaskPriorityChoices),
             'task_types': choices_to_list(TaskTypeChoices),
+            'notification_types': choices_to_list(NotificationTypeChoices),
             'client_request_statuses': choices_to_list(ClientStatusChoices),
             'working_formats': choices_to_list(WorkingFormatChoices),
             'language_levels': choices_to_list(LanguageLevelChoices),

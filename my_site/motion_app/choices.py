@@ -53,6 +53,12 @@ class TaskTypeChoices(models.TextChoices):
     IMPROVEMENT = 'Improvement', 'Улучшение'
 
 
+class NotificationTypeChoices(models.TextChoices):
+    ASSIGNED = 'Assigned', 'Назначили задачу'
+    COMMENT = 'Comment', 'Новый комментарий'
+    MENTION = 'Mention', 'Упомянули в комментарии'
+
+
 class ClientStatusChoices(models.TextChoices):
     NEW = 'New', 'Новая'
     REVIEWING = 'Reviewing', 'На рассмотрении'

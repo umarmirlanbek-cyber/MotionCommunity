@@ -30,6 +30,7 @@ NOUNS = {
     'comments': ('comment', 'comments'),
     'labels': ('label', 'labels'),
     'me/tasks': ('my task', 'my tasks'),
+    'me/notifications': ('notification', 'notifications'),
 }
 
 SPECIAL = {
@@ -41,6 +42,7 @@ SPECIAL = {
     'stats': 'Stats',
     'password': 'Change password',
     'health': 'Health check',
+    'read-all': 'Mark all notifications read',
 }
 
 ME_ACTIONS = {
