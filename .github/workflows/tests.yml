@@ -41,3 +41,31 @@ jobs:
       - run: pip install -r req.txt
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test
+
+  docker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: my_site
+    steps:
+      - uses: actions/checkout@v5
+      - name: Write .env
+        run: |
+          cat > .env <<'EOF'
+          SECRET_KEY=ci-only-not-a-real-secret-key-0123456789
+          DEBUG=False
+          ALLOWED_HOSTS=localhost,web
+          POSTGRES_DB=motion
+          POSTGRES_USER=motion
+          POSTGRES_PASSWORD=motion
+          EOF
+      - run: docker compose up -d --build --wait --wait-timeout 300
+      - run: docker compose exec -T web python manage.py check --deploy --fail-level ERROR
+      - name: Check the site through nginx
+        run: |
+          curl -fsS http://localhost/api/ru/health/
+          curl -fsS -o /dev/null http://localhost/api/ru/choices/
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/task_files/x.png)" = 404
+          for i in $(seq 1 20); do curl -s -o /dev/null -w '%{http_code}\n' http://localhost/admin/login/; done | grep -q 429
+      - if: failure()
+        run: docker compose logs
