@@ -18,7 +18,7 @@ from .choices import (
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, ClientRequest
 )
 from .filters import TaskFilter
 from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
@@ -305,6 +305,18 @@ class ProjectMemberViewSet(
 
 # ---------- Задачи ----------
 
+TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
+
+
+def history_value(task, field):
+    value = getattr(task, field)
+    if value is None:
+        return ''
+    if field == 'labels':
+        value = ', '.join(value)
+    return str(value)[:255]
+
+
 class TaskViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -324,7 +336,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related(
             'assignee', 'author'
-        ).prefetch_related('comments__author')
+        ).prefetch_related('comments__author', 'history__user')
 
     def perform_create(self, serializer):
         project = get_object_or_404(Project, pk=self.kwargs['project_id'])
@@ -335,7 +347,13 @@ class TaskViewSet(viewsets.ModelViewSet):
         is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
         if not is_lead and self.request.user.id not in (task.assignee_id, task.author_id):
             raise PermissionDenied('Менять можно только свои задачи')
+        old = {field: history_value(task, field) for field in TASK_HISTORY_FIELDS}
         serializer.save()
+        TaskHistory.objects.bulk_create([
+            TaskHistory(task=task, user=self.request.user, field=field, old_value=old[field], new_value=new)
+            for field in TASK_HISTORY_FIELDS
+            if (new := history_value(task, field)) != old[field]
+        ])
 
 
 class TaskLabelListAPIView(APIView):

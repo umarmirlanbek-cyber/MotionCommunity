@@ -227,6 +227,21 @@ class TaskComment(models.Model):
         return f'{self.author} - {self.task}'
 
 
+class TaskHistory(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='history')
+    user = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_changes', null=True)
+    field = models.CharField('Поле', max_length=30)
+    old_value = models.CharField('Было', max_length=255, blank=True)
+    new_value = models.CharField('Стало', max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+
+    def __str__(self):
+        return f'{self.task} - {self.field}'
+
+
 # ---------- Заявки клиентов ----------
 
 class ClientRequest(models.Model):

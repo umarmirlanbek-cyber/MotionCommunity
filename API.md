@@ -108,7 +108,7 @@
 | GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, type, labels, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?type=`, `?label=`, `?assignee=`, `?search=` (название) |
 | POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, type, labels, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
 | GET | `projects/{project_id}/tasks/labels/` | участник проекта | Все метки задач проекта: `["backend", "frontend"]` |
-| GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` |
+| GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` + `history` |
 | PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили - `{status, order}` |
 | DELETE | `projects/{project_id}/tasks/{id}/` | Admin или тимлид проекта | |
 | POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
@@ -203,6 +203,16 @@
       "text": "Начал, сегодня закончу",
       "created_at": "2026-10-22T13:42:40+06:00"
     }
+  ],
+  "history": [
+    {
+      "id": 3,
+      "user": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "field": "status",
+      "old_value": "To_do",
+      "new_value": "In_progress",
+      "created_at": "2026-10-22T14:05:11+06:00"
+    }
   ]
 }
 ```
@@ -220,6 +230,20 @@
 Менять задачу могут Admin, тимлид проекта, исполнитель или автор задачи. Остальные получат `403` `{"detail": "Менять можно только свои задачи"}`, тогда карточку надо вернуть на место.
 Соседние карточки бэкенд сам не перенумеровывает. Совет: при создании ставьте `order` с шагом 1000 (1000, 2000, 3000). Тогда для вставки между двумя карточками хватит одного `PATCH` с числом посередине.
 В ответ приходит `200` и задача целиком.
+
+#### История изменений
+
+Приходит в карточке задачи, в поле `history`, старые записи сверху. Одна запись - одно поле, которое поменяли через `PATCH`:
+
+- `field`: `title`, `status`, `priority`, `type`, `labels`, `assignee` или `due_date`.
+- `old_value`, `new_value` - всегда строки:
+  - для `status`, `priority` и `type` приходит значение (`In_progress`), подпись берите из `choices/`;
+  - для `assignee` - имя и фамилия, а если имя не заполнено - логин;
+  - для `labels` - метки через запятую;
+  - пустая строка - значения не было (без исполнителя, без срока).
+- `user` - кто поменял.
+
+Порядок внутри колонки (`order`) и описание в историю не попадают.
 
 #### Тип и метки
 

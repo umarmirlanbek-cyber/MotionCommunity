@@ -7,7 +7,8 @@ from .choices import (
     RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices
 )
 from .models import (
-    UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
+    UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory,
+    ClientRequest,
 )
 
 
@@ -433,6 +434,27 @@ class TaskTests(APITestCase):
         self.client.force_authenticate(self.member)
         response = self.client.get(self.url, {'status': TaskStatusChoices.DONE})
         self.assertEqual([task['title'] for task in response.data['results']], ['CI'])
+
+    def test_changes_go_to_history(self):
+        self.member.first_name = 'Азамат'
+        self.member.save()
+        self.client.force_authenticate(self.lead)
+        url = f'{self.url}{self.task.id}/'
+        response = self.client.patch(
+            url, {'status': TaskStatusChoices.REVIEW, 'assignee_id': self.other_member.id, 'order': 5}
+        )
+        self.assertEqual(
+            [(item['field'], item['old_value'], item['new_value']) for item in response.data['history']],
+            [('status', 'To_do', 'Review'), ('assignee', 'Азамат', 'dev2')],
+        )
+        self.assertEqual(response.data['history'][0]['user']['id'], self.lead.id)
+
+        self.client.patch(url, {'status': TaskStatusChoices.REVIEW, 'labels': []}, format='json')
+        self.assertEqual(TaskHistory.objects.count(), 2)
+
+        response = self.client.patch(url, {'labels': [f'{i}' * 50 for i in range(10)]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['history'][-1]['new_value']), 255)
 
     def test_type_and_labels(self):
         self.client.force_authenticate(self.member)

@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from modeltranslation.admin import TabbedTranslationAdmin
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, ClientRequest
 )
 
 
@@ -76,13 +76,23 @@ class TaskCommentInline(admin.TabularInline):
     autocomplete_fields = ('author',)
 
 
+class TaskHistoryInline(admin.TabularInline):
+    model = TaskHistory
+    extra = 0
+    can_delete = False
+    readonly_fields = ('user', 'field', 'old_value', 'new_value', 'created_at')
+
+    def has_add_permission(self, request, obj):
+        return False
+
+
 @admin.register(Task)
 class TaskAdmin(admin.ModelAdmin):
     list_display = ('title', 'project', 'status', 'priority', 'type', 'assignee', 'due_date')
     list_filter = ('status', 'priority', 'type', 'project')
     search_fields = ('title',)
     autocomplete_fields = ('assignee', 'author')
-    inlines = [TaskCommentInline]
+    inlines = [TaskCommentInline, TaskHistoryInline]
 
 
 @admin.register(ClientRequest)

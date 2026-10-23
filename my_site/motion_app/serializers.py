@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .choices import StatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskHistory, ClientRequest
 )
 
 
@@ -318,6 +318,14 @@ class TaskCommentSerializer(serializers.ModelSerializer):
         fields = ('id', 'author', 'text', 'created_at')
 
 
+class TaskHistorySerializer(serializers.ModelSerializer):
+    user = MemberShortSerializer(read_only=True)
+
+    class Meta:
+        model = TaskHistory
+        fields = ('id', 'user', 'field', 'old_value', 'new_value', 'created_at')
+
+
 class TaskListSerializer(serializers.ModelSerializer):
     assignee = MemberShortSerializer(read_only=True)
 
@@ -334,12 +342,13 @@ class TaskDetailSerializer(serializers.ModelSerializer):
     labels = serializers.ListField(child=serializers.CharField(max_length=50), max_length=10, required=False)
     author = MemberShortSerializer(read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
+    history = TaskHistorySerializer(many=True, read_only=True)
 
     class Meta:
         model = Task
         fields = (
             'id', 'title', 'description', 'status', 'priority', 'type', 'labels', 'assignee', 'assignee_id', 'author',
-            'due_date', 'order', 'created_at', 'updated_at', 'comments',
+            'due_date', 'order', 'created_at', 'updated_at', 'comments', 'history',
         )
 
     def validate_assignee_id(self, user):
