@@ -23,7 +23,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      SECRET_KEY: ci-only
+      SECRET_KEY: ci-only-not-a-real-secret-key-0123456789
       POSTGRES_DB: motion
       POSTGRES_USER: motion
       POSTGRES_PASSWORD: motion
