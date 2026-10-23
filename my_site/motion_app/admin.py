@@ -5,6 +5,7 @@ from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, ClientRequest
 )
+from .services import task_created, task_changed, comment_created
 
 
 class WorkExperienceInline(admin.StackedInline):
@@ -99,6 +100,20 @@ class TaskAdmin(admin.ModelAdmin):
     search_fields = ('title',)
     autocomplete_fields = ('assignee', 'author')
     inlines = [TaskCommentInline, TaskAttachmentInline, TaskHistoryInline]
+
+    def save_model(self, request, obj, form, change):
+        old = Task.objects.get(pk=obj.pk) if change else None
+        super().save_model(request, obj, form, change)
+        if old:
+            task_changed(old, obj, request.user)
+        else:
+            task_created(obj, request.user)
+
+    def save_formset(self, request, form, formset, change):
+        super().save_formset(request, form, formset, change)
+        if formset.model is TaskComment:
+            for comment in formset.new_objects:
+                comment_created(comment)
 
 
 @admin.register(ClientRequest)

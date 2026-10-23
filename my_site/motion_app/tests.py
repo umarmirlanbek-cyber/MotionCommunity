@@ -1,9 +1,13 @@
 import os
 import tempfile
+from unittest import mock
 
+from django.contrib.admin import site
 from django.core.cache import cache
+from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.test import RequestFactory, override_settings
+from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -11,10 +15,12 @@ from .choices import (
     RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
     NotificationTypeChoices,
 )
+from .admin import TaskAdmin
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
     TaskHistory, Notification, ClientRequest,
 )
+from .swagger import TAG_NAMES
 
 
 def make_user(username, role=RoleChoices.MEMBER, user_status=StatusChoices.ACTIVE, **kwargs):
@@ -23,9 +29,28 @@ def make_user(username, role=RoleChoices.MEMBER, user_status=StatusChoices.ACTIV
     )
 
 
-class AuthTests(APITestCase):
+@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
+class MotionTestCase(APITestCase):
     def setUp(self):
         cache.clear()
+
+
+class ProjectTestCase(MotionTestCase):
+    def setUp(self):
+        super().setUp()
+        self.lead = make_user('lead1')
+        self.member = make_user('dev1')
+        self.other_member = make_user('dev2')
+        self.outsider = make_user('dev3')
+        self.project = Project.objects.create(name='LMS', description='d', category='Web')
+        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
+        ProjectMember.objects.create(project=self.project, user=self.member)
+        ProjectMember.objects.create(project=self.project, user=self.other_member)
+
+
+class AuthTests(MotionTestCase):
+    def setUp(self):
+        super().setUp()
         self.user = make_user('dev1')
 
     def test_login_returns_tokens_and_user(self):
@@ -45,8 +70,9 @@ class AuthTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
 
-class MeTests(APITestCase):
+class MeTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.user = make_user('dev1', user_status=StatusChoices.INACTIVE)
         self.client.force_authenticate(self.user)
 
@@ -91,8 +117,9 @@ class MeTests(APITestCase):
         self.assertFalse(UserProfile.objects.filter(username='dev1').exists())
 
 
-class ResumeTests(APITestCase):
+class ResumeTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.user = make_user('dev1')
         self.other = make_user('dev2')
         self.client.force_authenticate(self.user)
@@ -132,8 +159,9 @@ class ResumeTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class MembersTests(APITestCase):
+class MembersTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.active = make_user('dev1', first_name='Азамат')
         self.inactive = make_user('dev2', user_status=StatusChoices.INACTIVE)
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
@@ -151,8 +179,9 @@ class MembersTests(APITestCase):
         self.assertNotIn('role', response.data)
 
 
-class UsersAdminTests(APITestCase):
+class UsersAdminTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
         self.member = make_user('dev1')
 
@@ -175,7 +204,7 @@ class UsersAdminTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
 
-class RoleTests(APITestCase):
+class RoleTests(MotionTestCase):
     def test_superuser_is_admin(self):
         user = UserProfile.objects.create_superuser('root', password='Pass12345!word')
         self.assertEqual(user.role, RoleChoices.ADMIN)
@@ -201,8 +230,9 @@ class RoleTests(APITestCase):
 
 # ---------- Команды ----------
 
-class TeamTests(APITestCase):
+class TeamTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
         self.member = make_user('dev1')
         self.team = Team.objects.create(name='Alpha')
@@ -235,8 +265,9 @@ class TeamTests(APITestCase):
         self.assertIn('first_name', response.data['members'][0]['user'])
 
 
-class TeamMemberTests(APITestCase):
+class TeamMemberTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
         self.lead = make_user('lead1')
         self.other_lead = make_user('lead2')
@@ -291,8 +322,9 @@ class TeamMemberTests(APITestCase):
 
 # ---------- Проекты ----------
 
-class ProjectTests(APITestCase):
+class ProjectTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
         self.lead = make_user('lead1')
         self.member = make_user('dev1')
@@ -347,8 +379,9 @@ class ProjectTests(APITestCase):
         self.assertEqual([project['name'] for project in response.data['results']], ['Shop'])
 
 
-class ProjectMemberTests(APITestCase):
+class ProjectMemberTests(MotionTestCase):
     def setUp(self):
+        super().setUp()
         self.lead = make_user('lead1')
         self.outsider = make_user('dev2')
         self.project = Project.objects.create(name='LMS', description='d', category='Web')
@@ -368,17 +401,10 @@ class ProjectMemberTests(APITestCase):
 
 # ---------- Задачи ----------
 
-class TaskTests(APITestCase):
+class TaskTests(ProjectTestCase):
     def setUp(self):
+        super().setUp()
         self.admin = make_user('admin', role=RoleChoices.ADMIN)
-        self.lead = make_user('lead1')
-        self.member = make_user('dev1')
-        self.other_member = make_user('dev2')
-        self.outsider = make_user('dev3')
-        self.project = Project.objects.create(name='LMS', description='d', category='Web')
-        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
-        ProjectMember.objects.create(project=self.project, user=self.member)
-        ProjectMember.objects.create(project=self.project, user=self.other_member)
         self.task = Task.objects.create(project=self.project, title='API уроков', assignee=self.member, author=self.lead)
         self.url = f'/api/ru/projects/{self.project.id}/tasks/'
 
@@ -461,6 +487,45 @@ class TaskTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['history'][-1]['new_value']), 255)
 
+    def test_admin_site_changes_go_to_history(self):
+        request = RequestFactory().post('/admin/')
+        request.user = self.admin
+        self.task.status = TaskStatusChoices.DONE
+        self.task.assignee = self.other_member
+        TaskAdmin(Task, site).save_model(request, self.task, None, True)
+        self.assertEqual(
+            list(TaskHistory.objects.values_list('field', 'user')),
+            [('status', self.admin.id), ('assignee', self.admin.id)],
+        )
+        self.assertTrue(Notification.objects.filter(user=self.other_member).exists())
+
+    def test_board_queries_do_not_grow(self):
+        self.client.force_authenticate(self.member)
+        card_url = f'{self.url}{self.task.id}/'
+
+        def count(url):
+            with CaptureQueriesContext(connection) as queries:
+                self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+            return len(queries)
+
+        def add_activity(times):
+            for i in range(times):
+                task = Task.objects.create(project=self.project, title=f'T{i}', assignee=self.other_member)
+                comment = TaskComment.objects.create(task=self.task, author=self.other_member, text='x')
+                TaskHistory.objects.create(task=self.task, user=self.lead, field='status')
+                TaskAttachment.objects.create(task=self.task, author=self.lead, file='task_files/x.png', name='x.png')
+                Notification.objects.create(
+                    user=self.member, actor=self.other_member, task=task, comment=comment,
+                    type=NotificationTypeChoices.COMMENT,
+                )
+
+        add_activity(1)
+        board, card, notifications = count(self.url), count(card_url), count('/api/ru/me/notifications/')
+        add_activity(10)
+        self.assertEqual(count(self.url), board)
+        self.assertEqual(count(card_url), card)
+        self.assertEqual(count('/api/ru/me/notifications/'), notifications)
+
     def test_type_and_labels(self):
         self.client.force_authenticate(self.member)
         response = self.client.post(
@@ -500,16 +565,9 @@ class TaskTests(APITestCase):
         )
 
 
-class TaskCommentTests(APITestCase):
+class TaskCommentTests(ProjectTestCase):
     def setUp(self):
-        self.lead = make_user('lead1')
-        self.member = make_user('dev1')
-        self.other_member = make_user('dev2')
-        self.outsider = make_user('dev3')
-        self.project = Project.objects.create(name='LMS', description='d', category='Web')
-        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
-        ProjectMember.objects.create(project=self.project, user=self.member)
-        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        super().setUp()
         self.task = Task.objects.create(project=self.project, title='API уроков')
         self.url = f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/comments/'
 
@@ -519,6 +577,13 @@ class TaskCommentTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         response = self.client.get(f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/')
         self.assertEqual(response.data['comments'][0]['author']['id'], self.member.id)
+
+    def test_comment_is_rolled_back_if_notifications_fail(self):
+        self.client.force_authenticate(self.member)
+        with mock.patch('motion_app.views.comment_created', side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError), self.assertLogs('django.request', 'ERROR'):
+                self.client.post(self.url, {'text': 'Начал'})
+        self.assertFalse(TaskComment.objects.exists())
 
     def test_outsider_cannot_comment(self):
         self.client.force_authenticate(self.outsider)
@@ -540,16 +605,9 @@ class TaskCommentTests(APITestCase):
 
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp())
-class TaskAttachmentTests(APITestCase):
+class TaskAttachmentTests(ProjectTestCase):
     def setUp(self):
-        self.lead = make_user('lead1')
-        self.member = make_user('dev1')
-        self.other_member = make_user('dev2')
-        self.outsider = make_user('dev3')
-        self.project = Project.objects.create(name='LMS', description='d', category='Web')
-        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
-        ProjectMember.objects.create(project=self.project, user=self.member)
-        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        super().setUp()
         self.task = Task.objects.create(project=self.project, title='API уроков')
         self.task_url = f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/'
         self.url = f'{self.task_url}attachments/'
@@ -564,6 +622,21 @@ class TaskAttachmentTests(APITestCase):
         attachment = self.client.get(self.task_url).data['attachments'][0]
         self.assertEqual(attachment['name'], 'screen.png')
         self.assertEqual(attachment['author']['id'], self.member.id)
+
+    def test_file_link_is_signed_and_expires(self):
+        self.client.force_authenticate(self.member)
+        link = self.upload().data['file']
+        self.assertIn('/api/ru/task-files/', link)
+        self.client.force_authenticate(None)
+        response = self.client.get(link)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(b''.join(response.streaming_content), b'data')
+        self.assertIn('attachment', response['Content-Disposition'])
+
+        tampered = link[:-2] + ('A' if link[-2] != 'A' else 'B') + '/'
+        self.assertEqual(self.client.get(tampered).status_code, status.HTTP_404_NOT_FOUND)
+        with mock.patch('motion_app.services.TASK_FILE_LINK_MAX_AGE', -1):
+            self.assertEqual(self.client.get(link).status_code, status.HTTP_403_FORBIDDEN)
 
     def test_wrong_type_and_outsider(self):
         self.client.force_authenticate(self.member)
@@ -582,16 +655,9 @@ class TaskAttachmentTests(APITestCase):
         self.assertFalse(os.path.exists(path))
 
 
-class NotificationTests(APITestCase):
+class NotificationTests(ProjectTestCase):
     def setUp(self):
-        self.lead = make_user('lead1')
-        self.member = make_user('dev1')
-        self.other_member = make_user('dev2')
-        self.outsider = make_user('dev3')
-        self.project = Project.objects.create(name='LMS', description='d', category='Web')
-        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
-        ProjectMember.objects.create(project=self.project, user=self.member)
-        ProjectMember.objects.create(project=self.project, user=self.other_member)
+        super().setUp()
         self.url = f'/api/ru/projects/{self.project.id}/tasks/'
 
     def received(self, user):
@@ -651,9 +717,9 @@ REQUEST_DATA = {
 }
 
 
-class ClientRequestTests(APITestCase):
+class ClientRequestTests(MotionTestCase):
     def setUp(self):
-        cache.clear()
+        super().setUp()
         self.admin = UserProfile.objects.create_user('admin', password='Pass12345!word', role=RoleChoices.ADMIN)
         self.member = UserProfile.objects.create_user('dev1', password='Pass12345!word')
 
@@ -702,7 +768,7 @@ class ClientRequestTests(APITestCase):
 
 # ---------- Статистика и справочники ----------
 
-class StatsTests(APITestCase):
+class StatsTests(MotionTestCase):
     def test_stats_count_only_real_things(self):
         UserProfile.objects.create_user('dev1', status=StatusChoices.ACTIVE)
         UserProfile.objects.create_user('dev2', status=StatusChoices.INACTIVE)
@@ -720,29 +786,45 @@ class StatsTests(APITestCase):
         self.assertEqual(response.data['companies_count'], 1)
 
 
-class ChoicesTests(APITestCase):
+class ChoicesTests(MotionTestCase):
     def test_choices(self):
         response = self.client.get('/api/ru/choices/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn({'value': 'UI_UX_Designer', 'label': 'UI/UX Designer'}, response.data['positions'])
 
 
-class HealthTests(APITestCase):
+class HealthTests(MotionTestCase):
     def test_health(self):
         response = self.client.get('/api/ru/health/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data, {'status': 'ok'})
 
 
-class DocsTests(APITestCase):
+class ThrottleTests(MotionTestCase):
+    def test_anonymous_requests_are_limited(self):
+        for _ in range(120):
+            self.client.get('/api/ru/choices/')
+        self.assertEqual(self.client.get('/api/ru/choices/').status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class DocsTests(MotionTestCase):
     def test_swagger_works(self):
         response = self.client.get('/api/docs.json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('/api/{lang}/teams/', response.json()['paths'])
         self.assertEqual(self.client.get('/api/docs/').status_code, status.HTTP_200_OK)
 
+    def test_every_operation_has_section_and_unique_name(self):
+        paths = self.client.get('/api/docs.json').json()['paths']
+        operations = [operation for item in paths.values() for method, operation in item.items() if method != 'parameters']
+        summaries = [operation['summary'] for operation in operations]
+        self.assertEqual(len(summaries), len(set(summaries)))
+        for operation in operations:
+            self.assertIn(operation['tags'][0], TAG_NAMES.values())
+            self.assertNotIn('_', operation['summary'])
 
-class LanguageTests(APITestCase):
+
+class LanguageTests(MotionTestCase):
     def test_language_from_url(self):
         project = Project.objects.create(
             name='LMS', category='Web', description_ru='Платформа', description_en='Platform'

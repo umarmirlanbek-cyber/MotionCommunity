@@ -1,14 +1,16 @@
-import os
-
 from django.contrib.auth.password_validation import validate_password
 from django.db import IntegrityError
+from django.urls import reverse
+from django.utils.translation import get_language
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .choices import StatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification,
+    ClientRequest,
 )
+from .services import task_file_token
 
 
 # ---------- Вход и выход ----------
@@ -322,14 +324,17 @@ class TaskCommentSerializer(serializers.ModelSerializer):
 
 class TaskAttachmentSerializer(serializers.ModelSerializer):
     author = MemberShortSerializer(read_only=True)
-    name = serializers.SerializerMethodField()
+    name = serializers.CharField(read_only=True)
 
     class Meta:
         model = TaskAttachment
         fields = ('id', 'author', 'file', 'name', 'created_at')
 
-    def get_name(self, attachment):
-        return os.path.basename(attachment.file.name)
+    def to_representation(self, attachment):
+        data = super().to_representation(attachment)
+        url = reverse('task-file', kwargs={'lang': get_language(), 'token': task_file_token(attachment)})
+        data['file'] = self.context['request'].build_absolute_uri(url)
+        return data
 
 
 class TaskHistorySerializer(serializers.ModelSerializer):

@@ -1,11 +1,13 @@
-import re
+from copy import copy
 
+from django.core.signing import BadSignature, SignatureExpired
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Count
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -16,15 +18,20 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .choices import (
-    RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices, TaskStatusChoices,
+    TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices, WorkingFormatChoices,
+    LanguageLevelChoices,
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, Notification, ClientRequest
 )
 from .filters import TaskFilter
-from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
+from .permission import (
+    is_admin, IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember,
+    IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
+)
+from .services import task_created, task_changed, comment_created, task_file_id
 from .serializers import (
     LoginSerializer, LogoutSerializer, ChangePasswordSerializer,
     MemberShortSerializer, MemberDetailSerializer, MeSerializer,
@@ -187,7 +194,6 @@ class UserViewSet(viewsets.ModelViewSet):
 # ---------- Команды ----------
 
 class TeamViewSet(viewsets.ModelViewSet):
-    queryset = Team.objects.annotate(members_count=Count('members')).prefetch_related('members__user', 'projects')
     http_method_names = ['get', 'post', 'patch', 'delete']
     filter_backends = [SearchFilter]
     search_fields = ['name']
@@ -202,51 +208,74 @@ class TeamViewSet(viewsets.ModelViewSet):
             return TeamListSerializer
         return TeamDetailSerializer
 
+    def get_queryset(self):
+        queryset = Team.objects.annotate(members_count=Count('members'))
+        if self.action == 'list':
+            return queryset
+        return queryset.prefetch_related('members__user', 'projects')
 
-class TeamMemberViewSet(
+
+class GroupMemberViewSet(
     mixins.ListModelMixin,
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
+    group_model = None
+    group_kwarg = None
+    group_name = None
+    list_permission = None
+    manage_permission = None
+    update_serializer_class = None
     lookup_field = 'user_id'
     http_method_names = ['get', 'post', 'patch', 'delete']
 
     def get_permissions(self):
         if self.action == 'list':
-            return [IsAuthenticated()]
-        return [IsAdminOrTeamLead()]
+            return [self.list_permission()]
+        return [self.manage_permission()]
 
     def get_serializer_class(self):
         if self.action == 'partial_update':
-            return TeamMemberUpdateSerializer
-        return TeamMemberSerializer
+            return self.update_serializer_class
+        return self.serializer_class
 
     def get_queryset(self):
-        return TeamMember.objects.filter(team_id=self.kwargs.get('team_id')).select_related('user')
+        return self.queryset.filter(**{self.group_kwarg: self.kwargs.get(self.group_kwarg)}).select_related('user')
 
     def perform_create(self, serializer):
-        team = get_object_or_404(Team, pk=self.kwargs['team_id'])
-        if serializer.validated_data.get('role') == MemberRoleChoices.TEAM_LEAD and self.request.user.role != RoleChoices.ADMIN:
+        group = get_object_or_404(self.group_model, pk=self.kwargs[self.group_kwarg])
+        if serializer.validated_data.get('role') == MemberRoleChoices.TEAM_LEAD and not is_admin(self.request.user):
             raise PermissionDenied('Назначать Team Lead может только Admin')
-        serializer.save(team=team)
+        serializer.save(**{self.group_kwarg: group.pk})
 
     def perform_update(self, serializer):
-        if self.request.user.role != RoleChoices.ADMIN:
-            raise PermissionDenied('Менять роль в команде может только Admin')
+        if not is_admin(self.request.user):
+            raise PermissionDenied(f'Менять роль в {self.group_name} может только Admin')
         serializer.save()
 
     def perform_destroy(self, instance):
-        if instance.role == MemberRoleChoices.TEAM_LEAD and self.request.user.role != RoleChoices.ADMIN:
+        if instance.role == MemberRoleChoices.TEAM_LEAD and not is_admin(self.request.user):
             raise PermissionDenied('Убрать Team Lead может только Admin')
         instance.delete()
+
+
+class TeamMemberViewSet(GroupMemberViewSet):
+    queryset = TeamMember.objects.all()
+    serializer_class = TeamMemberSerializer
+    update_serializer_class = TeamMemberUpdateSerializer
+    group_model = Team
+    group_kwarg = 'team_id'
+    group_name = 'команде'
+    list_permission = IsAuthenticated
+    manage_permission = IsAdminOrTeamLead
 
 
 # ---------- Проекты ----------
 
 class ProjectViewSet(viewsets.ModelViewSet):
-    queryset = Project.objects.select_related('team').prefetch_related('members__user')
+    queryset = Project.objects.select_related('team')
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'status', 'team']
     search_fields = ['name', 'description']
@@ -266,71 +295,24 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return ProjectListSerializer
         return ProjectDetailSerializer
 
-
-class ProjectMemberViewSet(
-    mixins.ListModelMixin,
-    mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
-    mixins.DestroyModelMixin,
-    viewsets.GenericViewSet,
-):
-    lookup_field = 'user_id'
-    http_method_names = ['get', 'post', 'patch', 'delete']
-
-    def get_permissions(self):
-        if self.action == 'list':
-            return [AllowAny()]
-        return [IsAdminOrProjectTeamLead()]
-
-    def get_serializer_class(self):
-        if self.action == 'partial_update':
-            return ProjectMemberUpdateSerializer
-        return ProjectMemberSerializer
-
     def get_queryset(self):
-        return ProjectMember.objects.filter(project_id=self.kwargs.get('project_id')).select_related('user')
+        if self.action == 'list':
+            return self.queryset
+        return self.queryset.prefetch_related('members__user')
 
-    def perform_create(self, serializer):
-        project = get_object_or_404(Project, pk=self.kwargs['project_id'])
-        if serializer.validated_data.get('role') == MemberRoleChoices.TEAM_LEAD and self.request.user.role != RoleChoices.ADMIN:
-            raise PermissionDenied('Назначать Team Lead может только Admin')
-        serializer.save(project=project)
 
-    def perform_update(self, serializer):
-        if self.request.user.role != RoleChoices.ADMIN:
-            raise PermissionDenied('Менять роль в проекте может только Admin')
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        if instance.role == MemberRoleChoices.TEAM_LEAD and self.request.user.role != RoleChoices.ADMIN:
-            raise PermissionDenied('Убрать Team Lead может только Admin')
-        instance.delete()
+class ProjectMemberViewSet(GroupMemberViewSet):
+    queryset = ProjectMember.objects.all()
+    serializer_class = ProjectMemberSerializer
+    update_serializer_class = ProjectMemberUpdateSerializer
+    group_model = Project
+    group_kwarg = 'project_id'
+    group_name = 'проекте'
+    list_permission = AllowAny
+    manage_permission = IsAdminOrProjectTeamLead
 
 
 # ---------- Задачи ----------
-
-TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
-
-
-def history_value(task, field):
-    value = getattr(task, field)
-    if value is None:
-        return ''
-    if field == 'labels':
-        value = ', '.join(value)
-    return str(value)[:255]
-
-
-MENTION_RE = re.compile(r'@([\w.+-]+)')
-
-
-def notify(users, actor, task, notification_type, comment=None):
-    recipients = {user.id: user for user in users if user and user.id != actor.id}
-    Notification.objects.bulk_create([
-        Notification(user=user, actor=actor, task=task, type=notification_type, comment=comment)
-        for user in recipients.values()
-    ])
-
 
 class TaskViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
@@ -341,6 +323,8 @@ class TaskViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'destroy':
             return [IsAdminOrProjectTeamLead()]
+        if self.action == 'partial_update':
+            return [IsAdminOrProjectMember(), CanEditTask()]
         return [IsAdminOrProjectMember()]
 
     def get_serializer_class(self):
@@ -349,30 +333,22 @@ class TaskViewSet(viewsets.ModelViewSet):
         return TaskDetailSerializer
 
     def get_queryset(self):
-        return Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related(
-            'assignee', 'author'
-        ).prefetch_related('comments__author', 'attachments__author', 'history__user')
+        queryset = Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related('assignee')
+        if self.action == 'list':
+            return queryset
+        return queryset.select_related('author').prefetch_related(
+            'comments__author', 'attachments__author', 'history__user'
+        )
 
     def perform_create(self, serializer):
         project = get_object_or_404(Project, pk=self.kwargs['project_id'])
         task = serializer.save(project=project, author=self.request.user)
-        notify([task.assignee], self.request.user, task, NotificationTypeChoices.ASSIGNED)
+        task_created(task, self.request.user)
 
     def perform_update(self, serializer):
-        task = serializer.instance
-        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
-        if not is_lead and self.request.user.id not in (task.assignee_id, task.author_id):
-            raise PermissionDenied('Менять можно только свои задачи')
-        old = {field: history_value(task, field) for field in TASK_HISTORY_FIELDS}
-        old_assignee_id = task.assignee_id
-        serializer.save()
-        if task.assignee_id != old_assignee_id:
-            notify([task.assignee], self.request.user, task, NotificationTypeChoices.ASSIGNED)
-        TaskHistory.objects.bulk_create([
-            TaskHistory(task=task, user=self.request.user, field=field, old_value=old[field], new_value=new)
-            for field in TASK_HISTORY_FIELDS
-            if (new := history_value(task, field)) != old[field]
-        ])
+        old = copy(serializer.instance)
+        task = serializer.save()
+        task_changed(old, task, self.request.user)
 
 
 class TaskLabelListAPIView(APIView):
@@ -390,8 +366,14 @@ class TaskCommentViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = TaskCommentSerializer
-    permission_classes = [IsAdminOrProjectMember]
     http_method_names = ['post', 'patch', 'delete']
+
+    def get_permissions(self):
+        if self.action == 'partial_update':
+            return [IsAdminOrProjectMember(), IsAuthor()]
+        if self.action == 'destroy':
+            return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
+        return [IsAdminOrProjectMember()]
 
     def get_queryset(self):
         return TaskComment.objects.filter(
@@ -401,22 +383,7 @@ class TaskCommentViewSet(
     def perform_create(self, serializer):
         task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
         comment = serializer.save(task=task, author=self.request.user)
-        names = {name.rstrip('.') for name in MENTION_RE.findall(comment.text)}
-        mentioned = list(UserProfile.objects.filter(username__in=names, project_memberships__project=task.project))
-        notify(mentioned, self.request.user, task, NotificationTypeChoices.MENTION, comment)
-        others = [user for user in (task.assignee, task.author) if user not in mentioned]
-        notify(others, self.request.user, task, NotificationTypeChoices.COMMENT, comment)
-
-    def perform_update(self, serializer):
-        if serializer.instance.author_id != self.request.user.id:
-            raise PermissionDenied('Менять можно только свой комментарий')
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
-        if not is_lead and instance.author_id != self.request.user.id:
-            raise PermissionDenied('Удалить чужой комментарий может только Admin или тимлид')
-        instance.delete()
+        comment_created(comment)
 
 
 class TaskAttachmentViewSet(
@@ -425,9 +392,13 @@ class TaskAttachmentViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = TaskAttachmentSerializer
-    permission_classes = [IsAdminOrProjectMember]
     parser_classes = [MultiPartParser]
     http_method_names = ['post', 'delete']
+
+    def get_permissions(self):
+        if self.action == 'destroy':
+            return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
+        return [IsAdminOrProjectMember()]
 
     def get_queryset(self):
         return TaskAttachment.objects.filter(
@@ -436,13 +407,23 @@ class TaskAttachmentViewSet(
 
     def perform_create(self, serializer):
         task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
-        serializer.save(task=task, author=self.request.user)
+        serializer.save(task=task, author=self.request.user, name=serializer.validated_data['file'].name[:255])
 
-    def perform_destroy(self, instance):
-        is_lead = IsAdminOrProjectTeamLead().has_permission(self.request, self)
-        if not is_lead and instance.author_id != self.request.user.id:
-            raise PermissionDenied('Удалить чужой файл может только Admin или тимлид')
-        instance.delete()
+
+class TaskFileView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    swagger_schema = None
+
+    def get(self, request, *args, **kwargs):
+        try:
+            attachment_id = task_file_id(kwargs['token'])
+        except SignatureExpired:
+            raise PermissionDenied('Ссылка устарела, откройте задачу заново')
+        except (BadSignature, ValueError):
+            raise NotFound()
+        attachment = get_object_or_404(TaskAttachment, pk=attachment_id)
+        return FileResponse(attachment.file.open('rb'), as_attachment=True, filename=attachment.name)
 
 
 class MyTaskListAPIView(generics.ListAPIView):

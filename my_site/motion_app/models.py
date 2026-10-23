@@ -1,3 +1,6 @@
+import os
+import uuid
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.contrib.postgres.fields import ArrayField
@@ -19,6 +22,10 @@ ATTACHMENT_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'doc
 def validate_file_size(file):
     if file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
         raise ValidationError(f'Файл больше {MAX_FILE_SIZE_MB} МБ')
+
+
+def task_file_path(attachment, filename):
+    return f'task_files/{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}'
 
 
 class UserProfileManager(UserManager):
@@ -234,16 +241,17 @@ class TaskAttachment(models.Model):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='attachments')
     author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_attachments', null=True)
     file = models.FileField(
-        'Файл', upload_to='task_files/',
+        'Файл', upload_to=task_file_path,
         validators=[FileExtensionValidator(ATTACHMENT_EXTENSIONS), validate_file_size],
     )
+    name = models.CharField('Имя файла', max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['created_at']
 
     def __str__(self):
-        return self.file.name
+        return self.name
 
 
 @receiver(post_delete, sender=TaskAttachment)
