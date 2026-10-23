@@ -323,7 +323,7 @@ class TaskListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = ('id', 'title', 'status', 'priority', 'assignee', 'due_date', 'order')
+        fields = ('id', 'title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date', 'order')
 
 
 class TaskDetailSerializer(serializers.ModelSerializer):
@@ -331,13 +331,14 @@ class TaskDetailSerializer(serializers.ModelSerializer):
     assignee_id = serializers.PrimaryKeyRelatedField(
         source='assignee', queryset=UserProfile.objects.all(), write_only=True, required=False, allow_null=True
     )
+    labels = serializers.ListField(child=serializers.CharField(max_length=50), max_length=10, required=False)
     author = MemberShortSerializer(read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Task
         fields = (
-            'id', 'title', 'description', 'status', 'priority', 'assignee', 'assignee_id', 'author',
+            'id', 'title', 'description', 'status', 'priority', 'type', 'labels', 'assignee', 'assignee_id', 'author',
             'due_date', 'order', 'created_at', 'updated_at', 'comments',
         )
 
@@ -346,6 +347,9 @@ class TaskDetailSerializer(serializers.ModelSerializer):
         if user and not ProjectMember.objects.filter(project_id=project_id, user=user).exists():
             raise serializers.ValidationError('Исполнитель должен состоять в проекте')
         return user
+
+    def validate_labels(self, labels):
+        return list(dict.fromkeys(labels))
 
 
 class MyTaskSerializer(TaskListSerializer):

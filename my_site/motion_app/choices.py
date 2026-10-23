@@ -46,6 +46,13 @@ class TaskPriorityChoices(models.TextChoices):
     CRITICAL = 'Critical', 'Критический'
 
 
+class TaskTypeChoices(models.TextChoices):
+    TASK = 'Task', 'Задача'
+    BUG = 'Bug', 'Баг'
+    FEATURE = 'Feature', 'Фича'
+    IMPROVEMENT = 'Improvement', 'Улучшение'
+
+
 class ClientStatusChoices(models.TextChoices):
     NEW = 'New', 'Новая'
     REVIEWING = 'Reviewing', 'На рассмотрении'

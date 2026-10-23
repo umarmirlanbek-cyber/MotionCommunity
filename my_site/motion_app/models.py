@@ -1,11 +1,12 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
+from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from phonenumber_field.modelfields import PhoneNumberField
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    TaskStatusChoices, TaskPriorityChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
 )
 
 
@@ -195,6 +196,8 @@ class Task(models.Model):
     description = models.TextField('Описание', blank=True)
     status = models.CharField(max_length=20, choices=TaskStatusChoices.choices, default=TaskStatusChoices.TO_DO)
     priority = models.CharField(max_length=20, choices=TaskPriorityChoices.choices, default=TaskPriorityChoices.MEDIUM)
+    type = models.CharField(max_length=20, choices=TaskTypeChoices.choices, default=TaskTypeChoices.TASK)
+    labels = ArrayField(models.CharField(max_length=50), verbose_name='Метки', blank=True, default=list)
     assignee = models.ForeignKey(
         UserProfile, on_delete=models.SET_NULL, related_name='assigned_tasks', null=True, blank=True
     )

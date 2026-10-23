@@ -105,22 +105,24 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?assignee=`, `?search=` (название) |
-| POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
+| GET | `projects/{project_id}/tasks/` | участник проекта | `{id, title, status, priority, type, labels, assignee, due_date, order}`. Фильтры `?status=`, `?priority=`, `?type=`, `?label=`, `?assignee=`, `?search=` (название) |
+| POST | `projects/{project_id}/tasks/` | участник проекта | `{title, description, status, priority, type, labels, assignee_id, due_date, order}`, обязательно только `title`. Автором становится тот, кто создал |
+| GET | `projects/{project_id}/tasks/labels/` | участник проекта | Все метки задач проекта: `["backend", "frontend"]` |
 | GET | `projects/{project_id}/tasks/{id}/` | участник проекта | Задача + `author` + `comments` |
 | PATCH | `projects/{project_id}/tasks/{id}/` | Admin, тимлид проекта, исполнитель или автор задачи | Любые поля. Карточку перетащили - `{status, order}` |
 | DELETE | `projects/{project_id}/tasks/{id}/` | Admin или тимлид проекта | |
 | POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
 | PATCH | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор комментария | `{text}` |
 | DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
-| GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=` |
+| GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=`, `?type=` |
 
-#### Колонки и приоритеты
+#### Колонки, приоритеты и типы
 
 Берутся из `GET choices/`:
 
 - `task_statuses`: `To_do`, `In_progress`, `Review`, `Done`
 - `task_priorities`: `Low`, `Medium`, `High`, `Critical`
+- `task_types`: `Task`, `Bug`, `Feature`, `Improvement`
 
 Каждый элемент - `{value, label}`, в `label` подпись по-русски.
 
@@ -128,7 +130,7 @@
 
 `GET projects/{project_id}/tasks/`. Видят участники проекта и Admin, остальным `403`.
 
-Фильтры: `?status=To_do`, `?priority=High`, `?assignee=4` (id пользователя), `?search=` (по названию).
+Фильтры: `?status=To_do`, `?priority=High`, `?type=Bug`, `?label=backend`, `?assignee=4` (id пользователя), `?search=` (по названию).
 Ответ приходит страницами по 20, следующая страница - `?page=2`. Поэтому доску удобнее грузить четырьмя запросами, по одному на колонку: `?status=To_do`, `?status=In_progress` и т. д.
 Внутри колонки задачи отсортированы по `order`, при равном `order` - по `id`.
 
@@ -141,6 +143,8 @@
       "title": "Сверстать страницу курса",
       "status": "To_do",
       "priority": "Medium",
+      "type": "Feature",
+      "labels": ["frontend"],
       "assignee": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "avatar": null},
       "due_date": null,
       "order": 0
@@ -161,13 +165,15 @@
   "description": "Поля: имя, почта, пароль",
   "status": "To_do",
   "priority": "High",
+  "type": "Feature",
+  "labels": ["frontend", "auth"],
   "assignee_id": 4,
   "due_date": "2026-11-01",
   "order": 0
 }
 ```
 
-Обязательно только `title`. По умолчанию `status: To_do`, `priority: Medium`, `order: 0`.
+Обязательно только `title`. По умолчанию `status: To_do`, `priority: Medium`, `type: Task`, `labels: []`, `order: 0`.
 `assignee_id` - только участник этого проекта, иначе `400`. Список участников отдаёт `GET projects/{id}/members/`.
 Автор ставится сам, это тот, кто создал задачу. В ответ приходит `201` и задача целиком, как в карточке.
 
@@ -182,6 +188,8 @@
   "description": "Поля: имя, почта, пароль",
   "status": "In_progress",
   "priority": "High",
+  "type": "Feature",
+  "labels": ["frontend", "auth"],
   "assignee": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
   "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
   "due_date": "2026-11-01",
@@ -212,6 +220,16 @@
 Менять задачу могут Admin, тимлид проекта, исполнитель или автор задачи. Остальные получат `403` `{"detail": "Менять можно только свои задачи"}`, тогда карточку надо вернуть на место.
 Соседние карточки бэкенд сам не перенумеровывает. Совет: при создании ставьте `order` с шагом 1000 (1000, 2000, 3000). Тогда для вставки между двумя карточками хватит одного `PATCH` с числом посередине.
 В ответ приходит `200` и задача целиком.
+
+#### Тип и метки
+
+- `type` - один из `task_types`. По умолчанию `Task`.
+- `labels` - список строк, например `["backend", "auth"]`. До 10 меток, каждая до 50 символов, повторы убираются сами.
+  Задачу с метками отправляйте JSON-телом, не формой.
+- Метки свободные: новая появляется, когда её впервые поставили в задачу.
+  `PATCH` с `labels` заменяет список целиком, `{"labels": []}` снимает все.
+- Подсказки при вводе: `GET projects/{project_id}/tasks/labels/` → `["auth", "backend", "frontend"]`, все метки проекта по алфавиту.
+- На доске: `?type=Bug`, `?label=backend` (задачи, где есть эта метка).
 
 #### Удалить
 

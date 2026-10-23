@@ -20,7 +20,7 @@ from motion_app.models import (
 )
 from motion_app.choices import (
     RoleChoices, MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices,
-    TaskStatusChoices, TaskPriorityChoices
+    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices
 )
 
 
@@ -195,16 +195,21 @@ class Command(BaseCommand):
         members = [member.user for member in project.members.order_by('id')]
         lead = members[0]
         data = [
-            ('Сверстать страницу курса', TaskStatusChoices.TO_DO, TaskPriorityChoices.MEDIUM),
-            ('Тесты для модуля оплаты', TaskStatusChoices.TO_DO, TaskPriorityChoices.LOW),
-            ('API списка уроков', TaskStatusChoices.IN_PROGRESS, TaskPriorityChoices.HIGH),
-            ('Вход через Google', TaskStatusChoices.REVIEW, TaskPriorityChoices.MEDIUM),
-            ('Настроить CI', TaskStatusChoices.DONE, TaskPriorityChoices.CRITICAL),
+            ('Сверстать страницу курса', TaskStatusChoices.TO_DO, TaskPriorityChoices.MEDIUM,
+             TaskTypeChoices.FEATURE, ['frontend']),
+            ('Тесты для модуля оплаты', TaskStatusChoices.TO_DO, TaskPriorityChoices.LOW,
+             TaskTypeChoices.TASK, ['backend', 'tests']),
+            ('API списка уроков', TaskStatusChoices.IN_PROGRESS, TaskPriorityChoices.HIGH,
+             TaskTypeChoices.FEATURE, ['backend']),
+            ('Вход через Google', TaskStatusChoices.REVIEW, TaskPriorityChoices.MEDIUM,
+             TaskTypeChoices.BUG, ['backend', 'frontend']),
+            ('Настроить CI', TaskStatusChoices.DONE, TaskPriorityChoices.CRITICAL,
+             TaskTypeChoices.IMPROVEMENT, ['devops']),
         ]
-        for i, (title, task_status, priority) in enumerate(data):
+        for i, (title, task_status, priority, task_type, labels) in enumerate(data):
             task = Task.objects.create(
                 project=project, title=title, status=task_status, priority=priority,
-                assignee=members[i % len(members)], author=lead,
+                type=task_type, labels=labels, assignee=members[i % len(members)], author=lead,
             )
             if task_status == TaskStatusChoices.REVIEW:
                 TaskComment.objects.create(task=task, author=lead, text='Посмотрю сегодня вечером.')

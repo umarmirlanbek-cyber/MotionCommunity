@@ -14,12 +14,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    TaskStatusChoices, TaskPriorityChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
 )
+from .filters import TaskFilter
 from .permission import IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember
 from .serializers import (
     LoginSerializer, LogoutSerializer, ChangePasswordSerializer,
@@ -307,7 +308,7 @@ class ProjectMemberViewSet(
 class TaskViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['status', 'priority', 'assignee']
+    filterset_class = TaskFilter
     search_fields = ['title']
 
     def get_permissions(self):
@@ -335,6 +336,14 @@ class TaskViewSet(viewsets.ModelViewSet):
         if not is_lead and self.request.user.id not in (task.assignee_id, task.author_id):
             raise PermissionDenied('Менять можно только свои задачи')
         serializer.save()
+
+
+class TaskLabelListAPIView(APIView):
+    permission_classes = [IsAdminOrProjectMember]
+
+    def get(self, request, *args, **kwargs):
+        labels = Task.objects.filter(project_id=self.kwargs['project_id']).values_list('labels', flat=True)
+        return Response(sorted({label for task_labels in labels for label in task_labels}))
 
 
 class TaskCommentViewSet(
@@ -372,7 +381,7 @@ class MyTaskListAPIView(generics.ListAPIView):
     serializer_class = MyTaskSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'priority']
+    filterset_fields = ['status', 'priority', 'type']
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
@@ -444,6 +453,7 @@ class ChoicesView(APIView):
             'project_statuses': choices_to_list(ProjectStatusChoices),
             'task_statuses': choices_to_list(TaskStatusChoices),
             'task_priorities': choices_to_list(TaskPriorityChoices),
+            'task_types': choices_to_list(TaskTypeChoices),
             'client_request_statuses': choices_to_list(ClientStatusChoices),
             'working_formats': choices_to_list(WorkingFormatChoices),
             'language_levels': choices_to_list(LanguageLevelChoices),

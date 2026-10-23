@@ -10,7 +10,7 @@ from .views import (
     UserViewSet,
     TeamViewSet, TeamMemberViewSet,
     ProjectViewSet, ProjectMemberViewSet,
-    TaskViewSet, TaskCommentViewSet, MyTaskListAPIView,
+    TaskViewSet, TaskLabelListAPIView, TaskCommentViewSet, MyTaskListAPIView,
     ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
     CommunityStatsView, ChoicesView, HealthView,
 )
@@ -43,6 +43,7 @@ urlpatterns = [
     path('projects/<int:project_id>/members/<int:user_id>/', ProjectMemberViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),
 
     path('projects/<int:project_id>/tasks/', TaskViewSet.as_view({'get': 'list', 'post': 'create'})),
+    path('projects/<int:project_id>/tasks/labels/', TaskLabelListAPIView.as_view()),
     path('projects/<int:project_id>/tasks/<int:pk>/', TaskViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'})),
     path('projects/<int:project_id>/tasks/<int:task_id>/comments/', TaskCommentViewSet.as_view({'post': 'create'})),
     path('projects/<int:project_id>/tasks/<int:task_id>/comments/<int:pk>/', TaskCommentViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'})),

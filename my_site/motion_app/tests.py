@@ -3,7 +3,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .choices import RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices
+from .choices import (
+    RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices
+)
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, ClientRequest
 )
@@ -431,6 +433,32 @@ class TaskTests(APITestCase):
         self.client.force_authenticate(self.member)
         response = self.client.get(self.url, {'status': TaskStatusChoices.DONE})
         self.assertEqual([task['title'] for task in response.data['results']], ['CI'])
+
+    def test_type_and_labels(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.post(
+            self.url, {'title': 'Падает вход', 'type': TaskTypeChoices.BUG, 'labels': ['backend', 'auth', 'backend']},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['labels'], ['backend', 'auth'])
+        self.assertEqual(Task.objects.get(pk=self.task.pk).type, TaskTypeChoices.TASK)
+
+        response = self.client.get(self.url, {'type': TaskTypeChoices.BUG, 'label': 'auth'})
+        self.assertEqual([task['title'] for task in response.data['results']], ['Падает вход'])
+        self.assertEqual(self.client.get(self.url, {'label': 'auth2'}).data['count'], 0)
+        self.assertEqual(self.client.get(f'{self.url}labels/').data, ['auth', 'backend'])
+
+    def test_labels_are_limited(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.post(self.url, {'title': 'X', 'labels': [f'l{i}' for i in range(11)]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.client.post(self.url, {'title': 'X', 'labels': ['a' * 51]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_outsider_cannot_see_labels(self):
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.get(f'{self.url}labels/').status_code, status.HTTP_403_FORBIDDEN)
 
     def test_my_tasks(self):
         other = Project.objects.create(name='Shop', description='d', category='Web')

@@ -28,6 +28,7 @@ NOUNS = {
     'projects/members': ('project member', 'project members'),
     'tasks': ('task', 'tasks'),
     'comments': ('comment', 'comments'),
+    'labels': ('label', 'labels'),
     'me/tasks': ('my task', 'my tasks'),
 }
 
