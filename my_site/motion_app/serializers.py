@@ -429,9 +429,11 @@ class ClientRequestCreateSerializer(serializers.ModelSerializer):
 
 
 class ClientRequestDetailSerializer(serializers.ModelSerializer):
+    project = ProjectShortSerializer(read_only=True)
+
     class Meta:
         model = ClientRequest
         fields = (
             'id', 'name', 'company', 'email', 'phone', 'title', 'description',
-            'project_type', 'budget', 'status', 'created_at',
+            'project_type', 'budget', 'status', 'project', 'created_at',
         )

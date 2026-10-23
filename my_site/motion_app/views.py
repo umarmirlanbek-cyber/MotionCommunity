@@ -1,6 +1,6 @@
 import re
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -505,10 +505,30 @@ class ClientRequestListCreateAPIView(generics.ListCreateAPIView):
 
 
 class ClientRequestDetailAPIView(generics.RetrieveUpdateAPIView):
-    queryset = ClientRequest.objects.all()
+    queryset = ClientRequest.objects.select_related('project')
     serializer_class = ClientRequestDetailSerializer
     permission_classes = [IsAdmin]
     http_method_names = ['get', 'patch']
+
+
+class ClientRequestProjectView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, *args, **kwargs):
+        with transaction.atomic():
+            client_request = get_object_or_404(ClientRequest.objects.select_for_update(), pk=kwargs['pk'])
+            if client_request.project_id:
+                return Response({'detail': 'По этой заявке проект уже создан'}, status=status.HTTP_400_BAD_REQUEST)
+            project = Project.objects.create(
+                name=client_request.title,
+                description=client_request.description,
+                category=client_request.project_type,
+            )
+            client_request.project = project
+            client_request.status = ClientStatusChoices.ACCEPTED
+            client_request.save()
+        serializer = ProjectDetailSerializer(project, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 # ---------- Статистика и справочники ----------

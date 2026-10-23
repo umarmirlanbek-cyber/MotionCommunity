@@ -675,6 +675,24 @@ class ClientRequestTests(APITestCase):
         response = self.client.patch(f'/api/ru/client-requests/{request.id}/', {'status': ClientStatusChoices.ACCEPTED})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
+    def test_admin_makes_project_from_request(self):
+        request = ClientRequest.objects.create(**REQUEST_DATA)
+        url = f'/api/ru/client-requests/{request.id}/project/'
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.post(url).status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual((response.data['name'], response.data['category']), ('CRM', 'CRM'))
+        request.refresh_from_db()
+        self.assertEqual(request.status, ClientStatusChoices.ACCEPTED)
+        self.assertEqual(request.project_id, response.data['id'])
+        self.assertEqual(self.client.get(f'/api/ru/client-requests/{request.id}/').data['project']['name'], 'CRM')
+
+        self.assertEqual(self.client.post(url).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Project.objects.count(), 1)
+
     def test_requests_are_limited(self):
         for _ in range(10):
             self.client.post('/api/ru/client-requests/', REQUEST_DATA)

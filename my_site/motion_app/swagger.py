@@ -44,6 +44,7 @@ SPECIAL = {
     'password': 'Change password',
     'health': 'Health check',
     'read-all': 'Mark all notifications read',
+    'project': 'Create project from request',
 }
 
 ME_ACTIONS = {

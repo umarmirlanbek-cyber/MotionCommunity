@@ -340,7 +340,10 @@
 | --- | --- | --- | --- |
 | POST | `client-requests/` | все | `{name, company, email, phone, title, description, project_type, budget}`. Не больше 10 в час с одного адреса |
 | GET | `client-requests/` | Admin | `?status=`, `?search=` |
-| GET, PATCH | `client-requests/{id}/` | Admin | Поменять `status`: `New` → `Reviewing` → `Accepted` или `Rejected` |
+| GET, PATCH | `client-requests/{id}/` | Admin | Поменять `status`: `New` → `Reviewing` → `Accepted` или `Rejected`. В ответе `project: {id, name}` или `null` |
+| POST | `client-requests/{id}/project/` | Admin | Создать проект из заявки, тело не нужно. Название берётся из `title`, описание из `description`, категория из `project_type`. Заявка станет `Accepted`. Ответ `201` - проект, как в `GET projects/{id}/`. Второй раз → `400` |
+
+Команду, участников и картинку созданному проекту ставят обычным `PATCH projects/{id}/`.
 
 ### Общее
 

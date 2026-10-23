@@ -12,7 +12,7 @@ from .views import (
     ProjectViewSet, ProjectMemberViewSet,
     TaskViewSet, TaskLabelListAPIView, TaskCommentViewSet, TaskAttachmentViewSet, MyTaskListAPIView,
     NotificationViewSet, NotificationReadAllView,
-    ClientRequestListCreateAPIView, ClientRequestDetailAPIView,
+    ClientRequestListCreateAPIView, ClientRequestDetailAPIView, ClientRequestProjectView,
     CommunityStatsView, ChoicesView, HealthView,
 )
 router = routers.SimpleRouter()
@@ -55,6 +55,7 @@ urlpatterns = [
 
     path('client-requests/', ClientRequestListCreateAPIView.as_view()),
     path('client-requests/<int:pk>/', ClientRequestDetailAPIView.as_view()),
+    path('client-requests/<int:pk>/project/', ClientRequestProjectView.as_view()),
 
     path('stats/', CommunityStatsView.as_view()),
     path('choices/', ChoicesView.as_view()),

@@ -296,6 +296,9 @@ class ClientRequest(models.Model):
     project_type = models.CharField('Тип проекта', max_length=150)
     budget = models.PositiveIntegerField('Бюджет', null=True, blank=True)
     status = models.CharField(max_length=20, choices=ClientStatusChoices.choices, default=ClientStatusChoices.NEW)
+    project = models.OneToOneField(
+        Project, on_delete=models.SET_NULL, related_name='client_request', null=True, blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
