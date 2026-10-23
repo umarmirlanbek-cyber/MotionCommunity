@@ -407,7 +407,7 @@ class TaskAttachmentViewSet(
 
     def perform_create(self, serializer):
         task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
-        serializer.save(task=task, author=self.request.user, name=serializer.validated_data['file'].name[:255])
+        serializer.save(task=task, author=self.request.user)
 
 
 class TaskFileView(APIView):

@@ -651,7 +651,9 @@ class TaskAttachmentTests(ProjectTestCase):
         self.client.force_authenticate(self.other_member)
         self.assertEqual(self.client.delete(f'{self.url}{attachment.id}/').status_code, status.HTTP_403_FORBIDDEN)
         self.client.force_authenticate(self.lead)
-        self.assertEqual(self.client.delete(f'{self.url}{attachment.id}/').status_code, status.HTTP_204_NO_CONTENT)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(f'{self.url}{attachment.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(os.path.exists(path))
 
 

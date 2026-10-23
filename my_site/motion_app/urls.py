@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.urls import path, include
 from rest_framework import routers
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -60,7 +61,7 @@ urlpatterns = [
 
     path('stats/', CommunityStatsView.as_view()),
     path('choices/', ChoicesView.as_view()),
-    path('health/', HealthView.as_view()),
+    path('health/', transaction.non_atomic_requests(HealthView.as_view())),
 
     path('', include(router.urls)),
 ]

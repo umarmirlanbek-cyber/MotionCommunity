@@ -1,7 +1,7 @@
 import os
 import uuid
 
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
@@ -253,10 +253,15 @@ class TaskAttachment(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if not self.name:
+            self.name = os.path.basename(self.file.name)[:255]
+        super().save(*args, **kwargs)
+
 
 @receiver(post_delete, sender=TaskAttachment)
 def delete_attachment_file(sender, instance, **kwargs):
-    instance.file.delete(save=False)
+    transaction.on_commit(lambda: instance.file.delete(save=False))
 
 
 class TaskHistory(models.Model):
