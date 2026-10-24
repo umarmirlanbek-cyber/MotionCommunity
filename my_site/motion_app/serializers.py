@@ -1,7 +1,4 @@
 from django.contrib.auth.password_validation import validate_password
-from django.db import IntegrityError
-from django.urls import reverse
-from django.utils.translation import get_language
 from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
@@ -11,12 +8,14 @@ from .models import (
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification,
     ClientRequest,
 )
-from .services import revoke_tokens, task_file_token
+from .services import task_file_url
 
 
 # ---------- Вход и выход ----------
 
 class LoginSerializer(TokenObtainPairSerializer):
+    default_error_messages = {'no_active_account': 'Неверный логин или пароль'}
+
     def validate(self, attrs):
         data = super().validate(attrs)
         data['user'] = {
@@ -154,7 +153,7 @@ class MeSerializer(MemberDetailSerializer):
     class Meta:
         model = UserProfile
         fields = MemberDetailSerializer.Meta.fields + ('username', 'email', 'role', 'status', 'created_at')
-        read_only_fields = ('username', 'role', 'status', 'created_at')
+        read_only_fields = ('username', 'role', 'status')
 
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
@@ -174,22 +173,18 @@ class UserListSerializer(serializers.ModelSerializer):
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, validators=[validate_password])
 
     class Meta:
         model = UserProfile
         fields = ('id', 'username', 'password', 'role')
-
-    def validate_password(self, value):
-        validate_password(value)
-        return value
 
     def create(self, validated_data):
         return UserProfile.objects.create_user(**validated_data)
 
 
 class UserDetailSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
+    password = serializers.CharField(write_only=True, required=False, validators=[validate_password])
 
     class Meta:
         model = UserProfile
@@ -197,46 +192,32 @@ class UserDetailSerializer(serializers.ModelSerializer):
             'id', 'username', 'password', 'email', 'first_name', 'last_name',
             'role', 'status', 'is_active', 'created_at',
         )
-        read_only_fields = ('status', 'created_at')
-
-    def validate_password(self, value):
-        validate_password(value)
-        return value
+        read_only_fields = ('status',)
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
         if password:
             instance.set_password(password)
-        instance.save()
-        if password:
-            revoke_tokens(instance)
-        return instance
+        return super().update(instance, validated_data)
 
 
 # ---------- Команды ----------
 
-class TeamMemberSerializer(serializers.ModelSerializer):
+class GroupMemberSerializer(serializers.ModelSerializer):
     user = MemberShortSerializer(read_only=True)
     user_id = serializers.PrimaryKeyRelatedField(source='user', queryset=UserProfile.objects.all(), write_only=True)
 
     class Meta:
-        model = TeamMember
         fields = ('user', 'user_id', 'role')
 
-    def create(self, validated_data):
-        try:
-            return super().create(validated_data)
-        except IntegrityError:
-            raise serializers.ValidationError({'user_id': 'Этот пользователь уже состоит в команде.'})
 
-
-class TeamMemberUpdateSerializer(serializers.ModelSerializer):
-    user = MemberShortSerializer(read_only=True)
-
-    class Meta:
+class TeamMemberSerializer(GroupMemberSerializer):
+    class Meta(GroupMemberSerializer.Meta):
         model = TeamMember
+
+
+class TeamMemberUpdateSerializer(TeamMemberSerializer):
+    class Meta(TeamMemberSerializer.Meta):
         fields = ('user', 'role')
 
 
@@ -271,26 +252,13 @@ class TeamDetailSerializer(serializers.ModelSerializer):
 
 # ---------- Проекты ----------
 
-class ProjectMemberSerializer(serializers.ModelSerializer):
-    user = MemberShortSerializer(read_only=True)
-    user_id = serializers.PrimaryKeyRelatedField(source='user', queryset=UserProfile.objects.all(), write_only=True)
-
-    class Meta:
+class ProjectMemberSerializer(GroupMemberSerializer):
+    class Meta(GroupMemberSerializer.Meta):
         model = ProjectMember
-        fields = ('user', 'user_id', 'role')
-
-    def create(self, validated_data):
-        try:
-            return super().create(validated_data)
-        except IntegrityError:
-            raise serializers.ValidationError({'user_id': 'Этот пользователь уже состоит в проекте.'})
 
 
-class ProjectMemberUpdateSerializer(serializers.ModelSerializer):
-    user = MemberShortSerializer(read_only=True)
-
-    class Meta:
-        model = ProjectMember
+class ProjectMemberUpdateSerializer(ProjectMemberSerializer):
+    class Meta(ProjectMemberSerializer.Meta):
         fields = ('user', 'role')
 
 
@@ -343,8 +311,7 @@ class TaskAttachmentSerializer(serializers.ModelSerializer):
 
     def to_representation(self, attachment):
         data = super().to_representation(attachment)
-        url = reverse('task-file', kwargs={'lang': get_language(), 'token': task_file_token(attachment)})
-        data['file'] = self.context['request'].build_absolute_uri(url)
+        data['file'] = self.context['request'].build_absolute_uri(task_file_url(attachment))
         return data
 
 
@@ -427,7 +394,7 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ('id', 'type', 'actor', 'task', 'comment', 'is_read', 'created_at')
-        read_only_fields = ('type', 'created_at')
+        read_only_fields = ('type',)
 
 
 # ---------- Заявки клиентов ----------
@@ -445,7 +412,6 @@ class ClientRequestCreateSerializer(serializers.ModelSerializer):
             'id', 'name', 'company', 'email', 'phone', 'title',
             'description', 'project_type', 'budget', 'created_at',
         )
-        read_only_fields = ('id', 'created_at')
 
 
 class ClientRequestDetailSerializer(serializers.ModelSerializer):

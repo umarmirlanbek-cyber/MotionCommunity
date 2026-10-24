@@ -1,8 +1,9 @@
 import re
-from copy import copy
 
 from django.core.signing import TimestampSigner
-from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.translation import get_language
 
 from .choices import NotificationTypeChoices
 from .models import UserProfile, ProjectMember, Task, TaskHistory, Notification
@@ -68,23 +69,20 @@ def comment_created(comment):
 
 
 def member_removed(member, actor):
-    tasks = Task.objects.filter(project_id=member.project_id, assignee_id=member.user_id).select_related('assignee')
-    for task in tasks:
-        old = copy(task)
-        task.assignee = None
-        task.save(update_fields=['assignee', 'updated_at'])
-        task_changed(old, task, actor)
-
-
-def revoke_tokens(user):
-    BlacklistedToken.objects.bulk_create([
-        BlacklistedToken(token=token)
-        for token in OutstandingToken.objects.filter(user=user, blacklistedtoken__isnull=True)
+    tasks = list(
+        Task.objects.filter(project_id=member.project_id, assignee_id=member.user_id).select_related('assignee')
+    )
+    if not tasks:
+        return
+    Task.objects.filter(pk__in=[task.pk for task in tasks]).update(assignee=None, updated_at=timezone.now())
+    old_value = history_value(tasks[0], 'assignee')
+    TaskHistory.objects.bulk_create([
+        TaskHistory(task=task, user=actor, field='assignee', old_value=old_value, new_value='') for task in tasks
     ])
 
 
-def task_file_token(attachment):
-    return task_file_signer.sign(str(attachment.pk))
+def task_file_url(attachment):
+    return reverse('task-file', kwargs={'lang': get_language(), 'token': task_file_signer.sign(str(attachment.pk))})
 
 
 def task_file_id(token):

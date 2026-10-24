@@ -16,43 +16,38 @@ class IsAdmin(BasePermission):
         )
 
 
-class IsAdminOrTeamLead(BasePermission):
+def project_role(request, view):
+    if not hasattr(request, 'project_role'):
+        request.project_role = ProjectMember.objects.filter(
+            project_id=view.kwargs.get('project_id') or view.kwargs.get('pk'), user=request.user
+        ).values_list('role', flat=True).first()
+    return request.project_role
+
+
+class IsAdminOr(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        if is_admin(user):
-            return True
+        return bool(user and user.is_authenticated and (is_admin(user) or self.allows(request, view)))
 
-        team_id = view.kwargs.get('team_id')
+    def allows(self, request, view):
+        return False
+
+
+class IsAdminOrTeamLead(IsAdminOr):
+    def allows(self, request, view):
         return TeamMember.objects.filter(
-            team_id=team_id, user=user, role=MemberRoleChoices.TEAM_LEAD
+            team_id=view.kwargs.get('team_id'), user=request.user, role=MemberRoleChoices.TEAM_LEAD
         ).exists()
 
 
-class IsAdminOrProjectTeamLead(BasePermission):
-    def has_permission(self, request, view):
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        if is_admin(user):
-            return True
-
-        project_id = view.kwargs.get('project_id') or view.kwargs.get('pk')
-        return ProjectMember.objects.filter(
-            project_id=project_id, user=user, role=MemberRoleChoices.TEAM_LEAD
-        ).exists()
+class IsAdminOrProjectTeamLead(IsAdminOr):
+    def allows(self, request, view):
+        return project_role(request, view) == MemberRoleChoices.TEAM_LEAD
 
 
-class IsAdminOrProjectMember(BasePermission):
-    def has_permission(self, request, view):
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        if is_admin(user):
-            return True
-
-        return ProjectMember.objects.filter(project_id=view.kwargs.get('project_id'), user=user).exists()
+class IsAdminOrProjectMember(IsAdminOr):
+    def allows(self, request, view):
+        return project_role(request, view) is not None
 
 
 class IsAuthor(BasePermission):

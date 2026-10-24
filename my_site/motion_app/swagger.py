@@ -64,8 +64,6 @@ class SectionAutoSchema(SwaggerAutoSchema):
 
     def get_summary_and_description(self):
         summary, description = super().get_summary_and_description()
-        if self.overrides.get('operation_summary'):
-            return summary, description
 
         keys = self.operation_keys
         action, resource = keys[-1], keys[-2]
@@ -79,12 +77,11 @@ class SectionAutoSchema(SwaggerAutoSchema):
         if resource in NOUNS:
             single, plural = NOUNS[resource]
             verbs = {
+                'list': f'List {plural}',
                 'create': f'Add {single}',
                 'read': f'Get {single}',
                 'partial_update': f'Update {single}',
                 'delete': f'Delete {single}',
             }
-            if action == 'list':
-                return f'List {plural}', description
             return verbs.get(action, summary), description
         return summary, description

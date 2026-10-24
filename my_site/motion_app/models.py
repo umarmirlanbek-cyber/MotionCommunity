@@ -1,5 +1,6 @@
 import os
 import uuid
+from functools import cache
 
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser, UserManager
@@ -7,8 +8,10 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator, RegexValidator
 from django.db.models.signals import post_delete, pre_save
+from django.utils import timezone
 from django.utils.deconstruct import deconstructible
 from phonenumber_field.modelfields import PhoneNumberField
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
     TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices,
@@ -83,7 +86,15 @@ class UserProfile(AbstractUser):
     def save(self, *args, **kwargs):
         self.is_staff = self.role == RoleChoices.ADMIN
         self.is_superuser = self.role == RoleChoices.ADMIN
+        password_changed = self.pk is not None and self._password is not None
         super().save(*args, **kwargs)
+        if password_changed:
+            revoke_tokens(self)
+
+
+def revoke_tokens(user):
+    tokens = OutstandingToken.objects.filter(user=user, blacklistedtoken__isnull=True, expires_at__gt=timezone.now())
+    BlacklistedToken.objects.bulk_create([BlacklistedToken(token_id=pk) for pk in tokens.values_list('pk', flat=True)])
 
 
 # ---------- Резюме: опыт, образование, языки, сертификаты ----------
@@ -347,13 +358,9 @@ class ClientRequest(models.Model):
 
 # ---------- Файлы ----------
 
-FILE_FIELDS = {
-    UserProfile: ('avatar', 'resume'),
-    Certificate: ('image',),
-    Team: ('image',),
-    Project: ('image',),
-    TaskAttachment: ('file',),
-}
+@cache
+def file_fields(model):
+    return [field.name for field in model._meta.concrete_fields if isinstance(field, models.FileField)]
 
 
 def delete_file_on_commit(storage, name):
@@ -362,10 +369,10 @@ def delete_file_on_commit(storage, name):
 
 
 def delete_replaced_files(sender, instance, update_fields=None, **kwargs):
-    fields = [field for field in FILE_FIELDS[sender] if update_fields is None or field in update_fields]
+    fields = [field for field in file_fields(sender) if update_fields is None or field in update_fields]
     if not instance.pk or not fields:
         return
-    old = sender.objects.filter(pk=instance.pk).values(*fields).first() or {}
+    old = sender._default_manager.filter(pk=instance.pk).values(*fields).first() or {}
     for field in fields:
         file = getattr(instance, field)
         if old.get(field) and old[field] != file.name:
@@ -373,11 +380,10 @@ def delete_replaced_files(sender, instance, update_fields=None, **kwargs):
 
 
 def delete_files(sender, instance, **kwargs):
-    for field in FILE_FIELDS[sender]:
+    for field in file_fields(sender):
         file = getattr(instance, field)
         delete_file_on_commit(file.storage, file.name)
 
 
-for model in FILE_FIELDS:
-    pre_save.connect(delete_replaced_files, sender=model)
-    post_delete.connect(delete_files, sender=model)
+pre_save.connect(delete_replaced_files)
+post_delete.connect(delete_files)

@@ -440,13 +440,9 @@ class ProjectTests(MotionTestCase):
         self.assertEqual([project['name'] for project in response.data['results']], ['Shop'])
 
 
-class ProjectMemberTests(MotionTestCase):
+class ProjectMemberTests(ProjectTestCase):
     def setUp(self):
         super().setUp()
-        self.lead = make_user('lead1')
-        self.outsider = make_user('dev2')
-        self.project = Project.objects.create(name='LMS', description='d', category='Web')
-        ProjectMember.objects.create(project=self.project, user=self.lead, role=MemberRoleChoices.TEAM_LEAD)
         self.url = f'/api/ru/projects/{self.project.id}/members/'
 
     def test_lead_adds_member(self):
@@ -857,8 +853,8 @@ REQUEST_DATA = {
 class ClientRequestTests(MotionTestCase):
     def setUp(self):
         super().setUp()
-        self.admin = UserProfile.objects.create_user('admin', password='Pass12345!word', role=RoleChoices.ADMIN)
-        self.member = UserProfile.objects.create_user('dev1', password='Pass12345!word')
+        self.admin = make_user('admin', role=RoleChoices.ADMIN)
+        self.member = make_user('dev1')
 
     def test_anyone_sends_request_and_cannot_set_status(self):
         response = self.client.post('/api/ru/client-requests/', {**REQUEST_DATA, 'status': ClientStatusChoices.ACCEPTED})
@@ -922,9 +918,9 @@ class ClientRequestTests(MotionTestCase):
 
 class StatsTests(MotionTestCase):
     def test_stats_count_only_real_things(self):
-        UserProfile.objects.create_user('dev1', status=StatusChoices.ACTIVE)
-        UserProfile.objects.create_user('dev2', status=StatusChoices.INACTIVE)
-        UserProfile.objects.create_user('admin', role=RoleChoices.ADMIN, status=StatusChoices.ACTIVE)
+        make_user('dev1')
+        make_user('dev2', user_status=StatusChoices.INACTIVE)
+        make_user('admin', role=RoleChoices.ADMIN)
         data = {
             'name': 'n', 'email': 'a@b.kg', 'phone': '+996700123456',
             'title': 't', 'description': 'd', 'project_type': 'p',

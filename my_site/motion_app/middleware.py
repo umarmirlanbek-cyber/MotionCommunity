@@ -5,7 +5,7 @@ from django.utils import translation
 class APILanguageMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        self.allowed = {code for code, _ in getattr(settings, 'LANGUAGES', [])}
+        self.allowed = {code for code, _ in settings.LANGUAGES}
 
     def __call__(self, request):
         parts = request.path_info.strip('/').split('/')
@@ -15,8 +15,6 @@ class APILanguageMiddleware:
             lang = parts[1]
 
         translation.activate(lang or settings.LANGUAGE_CODE)
-        if lang:
-            request.LANGUAGE_CODE = lang
 
         response = self.get_response(request)
 

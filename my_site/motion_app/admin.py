@@ -1,14 +1,12 @@
-from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.urls import reverse
 from django.utils.html import format_html
 from modeltranslation.admin import TabbedTranslationAdmin
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, ClientRequest
 )
-from .services import task_created, task_changed, comment_created, member_removed, task_file_token
+from .services import task_created, task_changed, comment_created, member_removed, task_file_url
 
 
 class WorkExperienceInline(admin.StackedInline):
@@ -92,13 +90,15 @@ class TaskAttachmentInline(admin.TabularInline):
     fields = ('download', 'author', 'created_at')
     readonly_fields = fields
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('author')
+
     def has_add_permission(self, request, obj):
         return False
 
     @admin.display(description='Файл')
     def download(self, attachment):
-        url = reverse('task-file', kwargs={'lang': settings.LANGUAGE_CODE, 'token': task_file_token(attachment)})
-        return format_html('<a href="{}">{}</a>', url, attachment.name)
+        return format_html('<a href="{}">{}</a>', task_file_url(attachment), attachment.name)
 
 
 class TaskHistoryInline(admin.TabularInline):
@@ -106,6 +106,9 @@ class TaskHistoryInline(admin.TabularInline):
     extra = 0
     can_delete = False
     readonly_fields = ('user', 'field', 'old_value', 'new_value', 'created_at')
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
 
     def has_add_permission(self, request, obj):
         return False

@@ -2,14 +2,14 @@ from copy import copy
 
 from django.core.signing import BadSignature, SignatureExpired
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
-from django.db.models import CharField, Count, F, Func
+from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db.models import CharField, Count, F, Func, Prefetch
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import translation
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
-from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -26,16 +26,15 @@ from .choices import (
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, Notification, ClientRequest
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, Notification, ClientRequest,
+    revoke_tokens,
 )
 from .filters import TaskFilter, MyTaskFilter
 from .permission import (
     is_admin, IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember,
     IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
 )
-from .services import (
-    task_created, task_changed, comment_created, member_removed, revoke_tokens, task_file_id,
-)
+from .services import task_created, task_changed, comment_created, member_removed, task_file_id
 from .serializers import (
     LoginSerializer, RefreshSerializer, LogoutSerializer, ChangePasswordSerializer,
     MemberShortSerializer, MemberDetailSerializer, MeSerializer,
@@ -53,16 +52,7 @@ from .serializers import (
 
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
-    permission_classes = [AllowAny]
     throttle_scope = 'login'
-
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-        except AuthenticationFailed:
-            return Response({'detail': 'Неверный логин или пароль'}, status=status.HTTP_401_UNAUTHORIZED)
-        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 class RefreshView(TokenRefreshView):
@@ -99,7 +89,9 @@ class VerifyTokenView(APIView):
 # ---------- Личный кабинет ----------
 
 PROFILE_PREFETCH = (
-    'work', 'education', 'languages', 'certificates', 'team_memberships__team', 'project_memberships__project',
+    'work', 'education', 'languages', 'certificates',
+    Prefetch('team_memberships', queryset=TeamMember.objects.select_related('team')),
+    Prefetch('project_memberships', queryset=ProjectMember.objects.select_related('project')),
 )
 
 
@@ -110,11 +102,16 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
     http_method_names = ['get', 'patch', 'delete']
 
     def get_object(self):
+        if self.request.method == 'GET':
+            return self.with_details()
+        return self.request.user
+
+    def with_details(self):
         return UserProfile.objects.prefetch_related(*PROFILE_PREFETCH).get(pk=self.request.user.pk)
 
     def perform_update(self, serializer):
         serializer.save()
-        serializer.instance = self.get_object()
+        serializer.instance = self.with_details()
 
     def perform_destroy(self, instance):
         revoke_tokens(instance)
@@ -129,8 +126,7 @@ class ChangePasswordView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
-        request.user.save()
-        revoke_tokens(request.user)
+        request.user.save(update_fields=['password'])
         return Response({'detail': 'Пароль изменён'})
 
 
@@ -231,11 +227,19 @@ class TeamViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if self.action == 'list':
             return Team.objects.annotate(members_count=Count('members'))
-        return Team.objects.prefetch_related('members__user', 'projects')
+        if self.action == 'retrieve':
+            return self.with_details(Team.objects.all())
+        return Team.objects.all()
+
+    @staticmethod
+    def with_details(queryset):
+        return queryset.prefetch_related(
+            Prefetch('members', queryset=TeamMember.objects.select_related('user')), 'projects'
+        )
 
     def perform_update(self, serializer):
         team = serializer.save()
-        serializer.instance = self.get_queryset().get(pk=team.pk)
+        serializer.instance = self.with_details(Team.objects.all()).get(pk=team.pk)
 
 
 class GroupMemberViewSet(
@@ -271,7 +275,11 @@ class GroupMemberViewSet(
         group = get_object_or_404(self.group_model, pk=self.kwargs[self.group_kwarg])
         if serializer.validated_data.get('role') == MemberRoleChoices.TEAM_LEAD and not is_admin(self.request.user):
             raise PermissionDenied('Назначать Team Lead может только Admin')
-        serializer.save(**{self.group_kwarg: group.pk})
+        try:
+            with transaction.atomic():
+                serializer.save(**{self.group_kwarg: group.pk})
+        except IntegrityError:
+            raise ValidationError({'user_id': f'Этот пользователь уже состоит в {self.group_name}.'})
 
     def perform_update(self, serializer):
         if not is_admin(self.request.user):
@@ -320,13 +328,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return ProjectDetailSerializer
 
     def get_queryset(self):
-        if self.action == 'list':
-            return self.queryset
-        return self.queryset.prefetch_related('members__user')
+        if self.action == 'retrieve':
+            return self.with_details(self.queryset)
+        return self.queryset
+
+    @staticmethod
+    def with_details(queryset):
+        return queryset.prefetch_related(Prefetch('members', queryset=ProjectMember.objects.select_related('user')))
 
     def perform_update(self, serializer):
         project = serializer.save()
-        serializer.instance = self.get_queryset().get(pk=project.pk)
+        serializer.instance = self.with_details(self.queryset).get(pk=project.pk)
 
 
 class ProjectMemberViewSet(GroupMemberViewSet):
@@ -398,55 +410,51 @@ class TaskLabelListAPIView(APIView):
         return Response(list(labels))
 
 
-class TaskCommentViewSet(
+class TaskChildViewSet(
     mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
+    model = None
+
+    def get_permissions(self):
+        if self.action == 'destroy':
+            return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
+        return [IsAdminOrProjectMember()]
+
+    def get_queryset(self):
+        return self.model.objects.filter(
+            task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
+        ).select_related('author')
+
+    def perform_create(self, serializer):
+        task = get_object_or_404(
+            Task.objects.select_related('assignee', 'author'),
+            pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'],
+        )
+        serializer.save(task=task, author=self.request.user)
+
+
+class TaskCommentViewSet(mixins.UpdateModelMixin, TaskChildViewSet):
+    model = TaskComment
     serializer_class = TaskCommentSerializer
     http_method_names = ['post', 'patch', 'delete']
 
     def get_permissions(self):
         if self.action == 'partial_update':
             return [IsAdminOrProjectMember(), IsAuthor()]
-        if self.action == 'destroy':
-            return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
-        return [IsAdminOrProjectMember()]
-
-    def get_queryset(self):
-        return TaskComment.objects.filter(
-            task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
-        ).select_related('author')
+        return super().get_permissions()
 
     def perform_create(self, serializer):
-        task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
-        comment = serializer.save(task=task, author=self.request.user)
-        comment_created(comment)
+        super().perform_create(serializer)
+        comment_created(serializer.instance)
 
 
-class TaskAttachmentViewSet(
-    mixins.CreateModelMixin,
-    mixins.DestroyModelMixin,
-    viewsets.GenericViewSet,
-):
+class TaskAttachmentViewSet(TaskChildViewSet):
+    model = TaskAttachment
     serializer_class = TaskAttachmentSerializer
     parser_classes = [MultiPartParser]
     http_method_names = ['post', 'delete']
-
-    def get_permissions(self):
-        if self.action == 'destroy':
-            return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
-        return [IsAdminOrProjectMember()]
-
-    def get_queryset(self):
-        return TaskAttachment.objects.filter(
-            task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
-        ).select_related('author')
-
-    def perform_create(self, serializer):
-        task = get_object_or_404(Task, pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'])
-        serializer.save(task=task, author=self.request.user)
 
 
 class TaskFileView(APIView):
@@ -542,21 +550,20 @@ class ClientRequestProjectView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        with transaction.atomic():
-            client_request = get_object_or_404(ClientRequest.objects.select_for_update(), pk=kwargs['pk'])
-            if client_request.project_id:
-                return Response({'detail': 'По этой заявке проект уже создан'}, status=status.HTTP_400_BAD_REQUEST)
-            if client_request.status == ClientStatusChoices.REJECTED:
-                return Response({'detail': 'Заявка отклонена'}, status=status.HTTP_400_BAD_REQUEST)
-            with translation.override(settings.LANGUAGE_CODE):
-                project = Project.objects.create(
-                    name=client_request.title,
-                    description=client_request.description,
-                    category=client_request.project_type,
-                )
-            client_request.project = project
-            client_request.status = ClientStatusChoices.ACCEPTED
-            client_request.save()
+        client_request = get_object_or_404(ClientRequest.objects.select_for_update(), pk=kwargs['pk'])
+        if client_request.project_id:
+            return Response({'detail': 'По этой заявке проект уже создан'}, status=status.HTTP_400_BAD_REQUEST)
+        if client_request.status == ClientStatusChoices.REJECTED:
+            return Response({'detail': 'Заявка отклонена'}, status=status.HTTP_400_BAD_REQUEST)
+        with translation.override(settings.LANGUAGE_CODE):
+            project = Project.objects.create(
+                name=client_request.title,
+                description=client_request.description,
+                category=client_request.project_type,
+            )
+        client_request.project = project
+        client_request.status = ClientStatusChoices.ACCEPTED
+        client_request.save()
         serializer = ProjectDetailSerializer(project, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

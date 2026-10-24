@@ -19,7 +19,7 @@ from motion_app.models import (
     Task, TaskComment, ClientRequest
 )
 from motion_app.choices import (
-    RoleChoices, MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices,
+    MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices,
     TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices
 )
 
@@ -34,7 +34,7 @@ class Command(BaseCommand):
 
         self.clear_all()
 
-        admin = self.create_admin()
+        self.create_admin()
         leads = self.create_team_leads()
         developers = self.create_developers()
         teams = self.create_teams()
@@ -53,10 +53,6 @@ class Command(BaseCommand):
 
     def clear_all(self):
         ClientRequest.objects.all().delete()
-        TaskComment.objects.all().delete()
-        Task.objects.all().delete()
-        ProjectMember.objects.all().delete()
-        TeamMember.objects.all().delete()
         Project.objects.all().delete()
         Team.objects.all().delete()
         UserProfile.objects.all().delete()
@@ -65,36 +61,37 @@ class Command(BaseCommand):
     # ---------- Users ----------
 
     def create_admin(self):
-        user = UserProfile.objects.create_superuser(
+        return UserProfile.objects.create_superuser(
             username='admin',
             email='admin@motion.community',
             password='Admin12345!',
+            first_name='Admin',
+            status=StatusChoices.ACTIVE,
         )
-        user.status = StatusChoices.ACTIVE
-        user.first_name = 'Admin'
-        user.save()
-        return user
+
+    def create_members(self, data, password, bio):
+        return [
+            UserProfile.objects.create_user(
+                username=username,
+                email=f'{username}@motion.community',
+                password=password,
+                first_name=first,
+                last_name=last,
+                position=position,
+                status=StatusChoices.ACTIVE,
+                bio=bio.format(first=first, last=last, position=position.replace('_', ' ')),
+            )
+            for username, first, last, position in data
+        ]
 
     def create_team_leads(self):
         data = [
             ('lead1', 'Нурлан', 'Асанов', 'Fullstack_Developer'),
             ('lead2', 'Айгерим', 'Токтогулова', 'Backend_Developer'),
         ]
-        leads = []
-        for username, first, last, position in data:
-            user = UserProfile.objects.create_user(
-                username=username,
-                email=f'{username}@motion.community',
-                password='TeamLead12345!',
-                first_name=first,
-                last_name=last,
-                position=position,
-                role=RoleChoices.MEMBER,
-                status=StatusChoices.ACTIVE,
-                bio=f'{first} {last} - тимлид в Motion Community, ведёт несколько проектов одновременно.',
-            )
-            leads.append(user)
-        return leads
+        return self.create_members(
+            data, 'TeamLead12345!', '{first} {last} - тимлид в Motion Community, ведёт несколько проектов одновременно.'
+        )
 
     def create_developers(self):
         data = [
@@ -109,21 +106,9 @@ class Command(BaseCommand):
             ('dev9', 'Данияр', 'Сатыбалдиев', 'QA_Engineer'),
             ('dev10', 'Нургуль', 'Бекова', 'Mobile_Developer'),
         ]
-        developers = []
-        for username, first, last, position in data:
-            user = UserProfile.objects.create_user(
-                username=username,
-                email=f'{username}@motion.community',
-                password='Developer12345!',
-                first_name=first,
-                last_name=last,
-                position=position,
-                role=RoleChoices.MEMBER,
-                status=StatusChoices.ACTIVE,
-                bio=f'{first} {last} - участник Motion Community, специализация: {position.replace("_", " ")}.',
-            )
-            developers.append(user)
-        return developers
+        return self.create_members(
+            data, 'Developer12345!', '{first} {last} - участник Motion Community, специализация: {position}.'
+        )
 
     # ---------- Teams ----------
 
@@ -173,8 +158,8 @@ class Command(BaseCommand):
             ProjectMember.objects.create(project=project, user=lead, role=MemberRoleChoices.TEAM_LEAD)
 
             for dev in group:
-                TeamMember.objects.create(team=team, user=dev, role=MemberRoleChoices.MEMBER)
-                ProjectMember.objects.create(project=project, user=dev, role=MemberRoleChoices.MEMBER)
+                TeamMember.objects.create(team=team, user=dev)
+                ProjectMember.objects.create(project=project, user=dev)
 
     # ---------- Резюме (одному участнику, чтобы фронту было что показать) ----------
 
