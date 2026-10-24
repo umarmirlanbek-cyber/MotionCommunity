@@ -172,7 +172,7 @@ REST_FRAMEWORK = {
         'login': '10/min',
         'client_requests': '10/hour',
     },
-    'NUM_PROXIES': 1,
+    'NUM_PROXIES': int(os.getenv('NUM_PROXIES', '1')),
 }
 
 SIMPLE_JWT = {

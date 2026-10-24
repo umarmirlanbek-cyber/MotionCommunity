@@ -4,6 +4,7 @@ from unittest import mock
 
 from django.contrib.admin import site
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, override_settings
@@ -15,7 +16,7 @@ from .choices import (
     RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
     NotificationTypeChoices,
 )
-from .admin import TaskAdmin
+from .admin import TaskAdmin, TaskAttachmentInline
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
     TaskHistory, Notification, ClientRequest,
@@ -29,7 +30,9 @@ def make_user(username, role=RoleChoices.MEMBER, user_status=StatusChoices.ACTIV
     )
 
 
-@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
+@override_settings(
+    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'], MEDIA_ROOT=tempfile.mkdtemp()
+)
 class MotionTestCase(APITestCase):
     def setUp(self):
         cache.clear()
@@ -62,6 +65,31 @@ class AuthTests(MotionTestCase):
     def test_login_wrong_password(self):
         response = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'wrong'})
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def login(self, password='Pass12345!word'):
+        return self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': password}).data
+
+    def refresh_status(self, refresh):
+        self.client.force_authenticate(None)
+        return self.client.post('/api/ru/auth/refresh/', {'refresh': refresh}).status_code
+
+    def test_password_change_revokes_refresh_tokens(self):
+        refresh = self.login()['refresh']
+        self.client.force_authenticate(self.user)
+        self.client.post('/api/ru/me/password/', {'old_password': 'Pass12345!word', 'new_password': 'NewPass12345!'})
+        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.refresh_status(self.login('NewPass12345!')['refresh']), status.HTTP_200_OK)
+
+    def test_admin_password_reset_revokes_refresh_tokens(self):
+        refresh = self.login()['refresh']
+        self.client.force_authenticate(make_user('admin', role=RoleChoices.ADMIN))
+        self.client.patch(f'/api/ru/users/{self.user.id}/', {'password': 'NewPass12345!'})
+        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
+
+    def test_refresh_of_deleted_user(self):
+        refresh = self.login()['refresh']
+        self.user.delete()
+        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
 
     def test_login_is_limited(self):
         for _ in range(10):
@@ -102,6 +130,39 @@ class MeTests(MotionTestCase):
         pdf = SimpleUploadedFile('cv.pdf', b'%PDF-1.4 test', content_type='application/pdf')
         response = self.client.patch('/api/ru/me/', {'resume': pdf}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_files_get_random_names_and_old_ones_are_deleted(self):
+        def upload(name):
+            pdf = SimpleUploadedFile(name, b'%PDF-1.4 test', content_type='application/pdf')
+            with self.captureOnCommitCallbacks(execute=True):
+                self.client.patch('/api/ru/me/', {'resume': pdf}, format='multipart')
+            self.user.refresh_from_db()
+            return self.user.resume.path
+
+        first = upload('Иванов CV.pdf')
+        self.assertNotIn('CV', os.path.basename(first))
+        second = upload('cv2.pdf')
+        self.assertFalse(os.path.exists(first))
+        with self.captureOnCommitCallbacks(execute=True):
+            self.client.delete('/api/ru/me/')
+        self.assertFalse(os.path.exists(second))
+
+    def test_me_queries_do_not_grow(self):
+        def count():
+            with CaptureQueriesContext(connection) as queries:
+                self.assertEqual(self.client.get('/api/ru/me/').status_code, status.HTTP_200_OK)
+            return len(queries)
+
+        def join(times):
+            for i in range(times):
+                TeamMember.objects.create(team=Team.objects.create(name=f'T{i}'), user=self.user)
+                project = Project.objects.create(name=f'P{i}', description='d', category='Web')
+                ProjectMember.objects.create(project=project, user=self.user)
+
+        join(1)
+        before = count()
+        join(5)
+        self.assertEqual(count(), before)
 
     def test_change_password_needs_old_password(self):
         response = self.client.post('/api/ru/me/password/', {'old_password': 'wrong', 'new_password': 'NewPass12345!'})
@@ -476,7 +537,7 @@ class TaskTests(ProjectTestCase):
         )
         self.assertEqual(
             [(item['field'], item['old_value'], item['new_value']) for item in response.data['history']],
-            [('status', 'To_do', 'Review'), ('assignee', 'Азамат', 'dev2')],
+            [('status', 'To_do', 'Review'), ('assignee', 'Азамат (@dev1)', 'dev2')],
         )
         self.assertEqual(response.data['history'][0]['user']['id'], self.lead.id)
 
@@ -568,9 +629,36 @@ class TaskTests(ProjectTestCase):
         self.client.force_authenticate(self.outsider)
         self.assertEqual(self.client.get(f'{self.url}labels/').status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_labels_cannot_contain_commas(self):
+        self.client.force_authenticate(self.member)
+        response = self.client.post(self.url, {'title': 'X', 'labels': ['ui, ux']}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_model_rejects_assignee_outside_project(self):
+        Task(project=self.project, title='X', author=self.lead, assignee=self.member).full_clean()
+        with self.assertRaises(ValidationError) as error:
+            Task(project=self.project, title='X', author=self.lead, assignee=self.outsider).full_clean()
+        self.assertEqual(list(error.exception.message_dict), ['assignee'])
+        with self.assertRaises(ValidationError) as error:
+            Task(project=self.project, title='X', author=self.lead, labels=[f'l{i}' for i in range(11)]).full_clean()
+        self.assertEqual(list(error.exception.message_dict), ['labels'])
+
+    def test_unchanged_assignee_can_be_sent_again(self):
+        ProjectMember.objects.filter(user=self.member).delete()
+        self.client.force_authenticate(self.lead)
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': self.member.id, 'title': 'X'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_ids_in_urls_must_be_numbers(self):
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.patch('/api/ru/projects/abc/', {'name': 'X'}).status_code, 404)
+
     def test_my_tasks(self):
         other = Project.objects.create(name='Shop', description='d', category='Web')
+        ProjectMember.objects.create(project=other, user=self.member)
         Task.objects.create(project=other, title='Корзина', assignee=self.member)
+        left = Project.objects.create(name='Old', description='d', category='Web')
+        Task.objects.create(project=left, title='Старая', assignee=self.member)
         Task.objects.create(project=self.project, title='Чужая', assignee=self.other_member)
         self.client.force_authenticate(self.member)
         response = self.client.get('/api/ru/me/tasks/')
@@ -620,7 +708,6 @@ class TaskCommentTests(ProjectTestCase):
         self.assertEqual(self.client.delete(f'{self.url}{comment.id}/').status_code, status.HTTP_204_NO_CONTENT)
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
 class TaskAttachmentTests(ProjectTestCase):
     def setUp(self):
         super().setUp()
@@ -653,6 +740,17 @@ class TaskAttachmentTests(ProjectTestCase):
         self.assertEqual(self.client.get(tampered).status_code, status.HTTP_404_NOT_FOUND)
         with mock.patch('motion_app.services.TASK_FILE_LINK_MAX_AGE', -1):
             self.assertEqual(self.client.get(link).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_long_name_missing_file_and_admin_link(self):
+        self.client.force_authenticate(self.member)
+        response = self.upload('а' * 150 + '.pdf')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        attachment = TaskAttachment.objects.get(pk=response.data['id'])
+        self.assertEqual(attachment.name, 'а' * 150 + '.pdf')
+        self.assertIn('/api/ru/task-files/', TaskAttachmentInline(Task, site).download(attachment))
+
+        os.remove(attachment.file.path)
+        self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
 
     def test_wrong_type_and_outsider(self):
         self.client.force_authenticate(self.member)
@@ -710,6 +808,21 @@ class NotificationTests(ProjectTestCase):
             self.received(self.lead),
             [NotificationTypeChoices.COMMENT, NotificationTypeChoices.COMMENT, NotificationTypeChoices.MENTION],
         )
+
+    def test_removed_member_loses_tasks_and_comments(self):
+        task = Task.objects.create(project=self.project, title='API', assignee=self.member, author=self.member)
+        self.client.force_authenticate(self.lead)
+        self.client.delete(f'/api/ru/projects/{self.project.id}/members/{self.member.id}/')
+        task.refresh_from_db()
+        self.assertIsNone(task.assignee)
+        self.assertEqual(
+            list(TaskHistory.objects.values_list('field', 'old_value', 'new_value', 'user')),
+            [('assignee', 'dev1', '', self.lead.id)],
+        )
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': 'бюджет 500k'})
+        self.assertEqual(self.received(self.member), [])
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.get('/api/ru/me/tasks/').data['count'], 0)
 
     def test_my_notifications(self):
         task = Task.objects.create(project=self.project, title='API')
@@ -782,6 +895,12 @@ class ClientRequestTests(MotionTestCase):
 
         self.assertEqual(self.client.post(url).status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Project.objects.count(), 1)
+
+    def test_project_from_request_keeps_russian_description(self):
+        request = ClientRequest.objects.create(**REQUEST_DATA)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f'/api/en/client-requests/{request.id}/project/')
+        self.assertEqual(Project.objects.get(pk=response.data['id']).description_ru, 'Нужен CRM')
 
     def test_rejected_request_cannot_become_project(self):
         request = ClientRequest.objects.create(status=ClientStatusChoices.REJECTED, **REQUEST_DATA)
@@ -868,6 +987,10 @@ class LanguageTests(MotionTestCase):
         self.assertEqual(response.data['description'], 'Platform')
         response = self.client.get(f'/api/ru/projects/{project.id}/')
         self.assertEqual(response.data['description'], 'Платформа')
+
+    def test_language_does_not_leak_between_requests(self):
+        self.client.get('/api/en/choices/')
+        self.assertContains(self.client.get('/admin/login/'), 'lang="ru"')
 
     def test_english_falls_back_to_russian(self):
         project = Project.objects.create(name='LMS', category='Web', description_ru='Платформа')

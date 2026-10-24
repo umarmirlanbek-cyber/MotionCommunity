@@ -11,3 +11,8 @@ class TaskFilter(filters.FilterSet):
 
     def filter_label(self, queryset, name, value):
         return queryset.filter(labels__contains=[value])
+
+
+class MyTaskFilter(TaskFilter):
+    class Meta(TaskFilter.Meta):
+        fields = ['status', 'priority', 'type']

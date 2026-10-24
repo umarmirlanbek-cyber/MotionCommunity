@@ -3,14 +3,15 @@ from django.db import IntegrityError
 from django.urls import reverse
 from django.utils.translation import get_language
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 from .choices import StatusChoices
 from .models import (
-    UserProfile, WorkExperience, Education, Language, Certificate,
+    UserProfile, WorkExperience, Education, Language, Certificate, validate_label,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification,
     ClientRequest,
 )
-from .services import task_file_token
+from .services import revoke_tokens, task_file_token
 
 
 # ---------- Вход и выход ----------
@@ -25,6 +26,14 @@ class LoginSerializer(TokenObtainPairSerializer):
             'status': self.user.status,
         }
         return data
+
+
+class RefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except UserProfile.DoesNotExist:
+            raise InvalidToken('Пользователь удалён')
 
 
 class LogoutSerializer(serializers.Serializer):
@@ -201,6 +210,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
         instance.save()
+        if password:
+            revoke_tokens(instance)
         return instance
 
 
@@ -358,7 +369,9 @@ class TaskDetailSerializer(serializers.ModelSerializer):
     assignee_id = serializers.PrimaryKeyRelatedField(
         source='assignee', queryset=UserProfile.objects.all(), write_only=True, required=False, allow_null=True
     )
-    labels = serializers.ListField(child=serializers.CharField(max_length=50), max_length=10, required=False)
+    labels = serializers.ListField(
+        child=serializers.CharField(max_length=50, validators=[validate_label]), max_length=10, required=False
+    )
     author = MemberShortSerializer(read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
     attachments = TaskAttachmentSerializer(many=True, read_only=True)
@@ -373,6 +386,8 @@ class TaskDetailSerializer(serializers.ModelSerializer):
 
     def validate_assignee_id(self, user):
         project_id = self.context['view'].kwargs['project_id']
+        if self.instance and user and user.pk == self.instance.assignee_id:
+            return user
         if user and not ProjectMember.objects.filter(project_id=project_id, user=user).exists():
             raise serializers.ValidationError('Исполнитель должен состоять в проекте')
         return user

@@ -1,10 +1,12 @@
 from copy import copy
 
 from django.core.signing import BadSignature, SignatureExpired
+from django.conf import settings
 from django.db import DatabaseError, connection, transaction
 from django.db.models import CharField, Count, F, Func
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.utils import translation
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
 from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied
@@ -15,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices, TaskStatusChoices,
@@ -26,14 +28,16 @@ from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, Notification, ClientRequest
 )
-from .filters import TaskFilter
+from .filters import TaskFilter, MyTaskFilter
 from .permission import (
     is_admin, IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember,
     IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
 )
-from .services import task_created, task_changed, comment_created, task_file_id
+from .services import (
+    task_created, task_changed, comment_created, member_removed, revoke_tokens, task_file_id,
+)
 from .serializers import (
-    LoginSerializer, LogoutSerializer, ChangePasswordSerializer,
+    LoginSerializer, RefreshSerializer, LogoutSerializer, ChangePasswordSerializer,
     MemberShortSerializer, MemberDetailSerializer, MeSerializer,
     UserListSerializer, UserCreateSerializer, UserDetailSerializer,
     WorkExperienceSerializer, EducationSerializer, LanguageSerializer, CertificateSerializer,
@@ -59,6 +63,10 @@ class LoginView(TokenObtainPairView):
         except AuthenticationFailed:
             return Response({'detail': 'Неверный логин или пароль'}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
+
+class RefreshView(TokenRefreshView):
+    serializer_class = RefreshSerializer
 
 
 class LogoutView(generics.GenericAPIView):
@@ -90,6 +98,11 @@ class VerifyTokenView(APIView):
 
 # ---------- Личный кабинет ----------
 
+PROFILE_PREFETCH = (
+    'work', 'education', 'languages', 'certificates', 'team_memberships__team', 'project_memberships__project',
+)
+
+
 class MeView(generics.RetrieveUpdateDestroyAPIView):
     queryset = UserProfile.objects.all()
     serializer_class = MeSerializer
@@ -97,7 +110,15 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
     http_method_names = ['get', 'patch', 'delete']
 
     def get_object(self):
-        return self.request.user
+        return UserProfile.objects.prefetch_related(*PROFILE_PREFETCH).get(pk=self.request.user.pk)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        serializer.instance = self.get_object()
+
+    def perform_destroy(self, instance):
+        revoke_tokens(instance)
+        instance.delete()
 
 
 class ChangePasswordView(generics.GenericAPIView):
@@ -109,6 +130,7 @@ class ChangePasswordView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
+        revoke_tokens(request.user)
         return Response({'detail': 'Пароль изменён'})
 
 
@@ -121,6 +143,7 @@ class MyResumeViewSet(
     model = None
     permission_classes = [IsAuthenticated]
     http_method_names = ['post', 'patch', 'delete']
+    lookup_value_regex = r'\d+'
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
@@ -154,7 +177,7 @@ class CertificateViewSet(MyResumeViewSet):
 # ---------- Участники (публично) ----------
 
 class MemberListAPIView(generics.ListAPIView):
-    queryset = UserProfile.objects.filter(role=RoleChoices.MEMBER, status=StatusChoices.ACTIVE, is_active=True)
+    queryset = UserProfile.objects.public()
     serializer_class = MemberShortSerializer
     permission_classes = [AllowAny]
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -163,12 +186,7 @@ class MemberListAPIView(generics.ListAPIView):
 
 
 class MemberDetailAPIView(generics.RetrieveAPIView):
-    queryset = UserProfile.objects.filter(
-        role=RoleChoices.MEMBER, status=StatusChoices.ACTIVE, is_active=True
-    ).prefetch_related(
-        'work', 'education', 'languages', 'certificates',
-        'team_memberships__team', 'project_memberships__project',
-    )
+    queryset = UserProfile.objects.public().prefetch_related(*PROFILE_PREFETCH)
     serializer_class = MemberDetailSerializer
     permission_classes = [AllowAny]
 
@@ -179,6 +197,7 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = UserProfile.objects.all()
     permission_classes = [IsAdmin]
     http_method_names = ['get', 'post', 'patch', 'delete']
+    lookup_value_regex = r'\d+'
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['role', 'status', 'is_active']
     search_fields = ['username', 'first_name', 'last_name']
@@ -195,6 +214,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class TeamViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
+    lookup_value_regex = r'\d+'
     filter_backends = [SearchFilter]
     search_fields = ['name']
 
@@ -209,10 +229,9 @@ class TeamViewSet(viewsets.ModelViewSet):
         return TeamDetailSerializer
 
     def get_queryset(self):
-        queryset = Team.objects.annotate(members_count=Count('members'))
         if self.action == 'list':
-            return queryset
-        return queryset.prefetch_related('members__user', 'projects')
+            return Team.objects.annotate(members_count=Count('members'))
+        return Team.objects.prefetch_related('members__user', 'projects')
 
     def perform_update(self, serializer):
         team = serializer.save()
@@ -286,6 +305,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'name']
     ordering = ['-created_at']
     http_method_names = ['get', 'post', 'patch', 'delete']
+    lookup_value_regex = r'\d+'
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -318,6 +338,10 @@ class ProjectMemberViewSet(GroupMemberViewSet):
     group_name = 'проекте'
     list_permission = AllowAny
     manage_permission = IsAdminOrProjectTeamLead
+
+    def perform_destroy(self, instance):
+        super().perform_destroy(instance)
+        member_removed(instance, self.request.user)
 
 
 # ---------- Задачи ----------
@@ -438,19 +462,25 @@ class TaskFileView(APIView):
         except (BadSignature, ValueError):
             raise NotFound()
         attachment = get_object_or_404(TaskAttachment, pk=attachment_id)
-        return FileResponse(attachment.file.open('rb'), as_attachment=True, filename=attachment.name)
+        try:
+            file = attachment.file.open('rb')
+        except FileNotFoundError:
+            raise NotFound()
+        return FileResponse(file, as_attachment=True, filename=attachment.name)
 
 
 class MyTaskListAPIView(generics.ListAPIView):
     serializer_class = MyTaskSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'priority', 'type']
+    filterset_class = MyTaskFilter
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Task.objects.none()
-        return Task.objects.filter(assignee=self.request.user).select_related('assignee', 'project')
+        return Task.objects.filter(
+            assignee=self.request.user, project__members__user=self.request.user
+        ).select_related('assignee', 'project')
 
 
 # ---------- Уведомления ----------
@@ -459,6 +489,7 @@ class NotificationViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, viewse
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'patch']
+    lookup_value_regex = r'\d+'
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['is_read', 'type']
 
@@ -517,11 +548,12 @@ class ClientRequestProjectView(APIView):
                 return Response({'detail': 'По этой заявке проект уже создан'}, status=status.HTTP_400_BAD_REQUEST)
             if client_request.status == ClientStatusChoices.REJECTED:
                 return Response({'detail': 'Заявка отклонена'}, status=status.HTTP_400_BAD_REQUEST)
-            project = Project.objects.create(
-                name=client_request.title,
-                description=client_request.description,
-                category=client_request.project_type,
-            )
+            with translation.override(settings.LANGUAGE_CODE):
+                project = Project.objects.create(
+                    name=client_request.title,
+                    description=client_request.description,
+                    category=client_request.project_type,
+                )
             client_request.project = project
             client_request.status = ClientStatusChoices.ACCEPTED
             client_request.save()
@@ -536,9 +568,7 @@ class CommunityStatsView(APIView):
 
     def get(self, request, *args, **kwargs):
         return Response({
-            'members_count': UserProfile.objects.filter(
-                role=RoleChoices.MEMBER, status=StatusChoices.ACTIVE, is_active=True
-            ).count(),
+            'members_count': UserProfile.objects.public().count(),
             'teams_count': Team.objects.count(),
             'projects_count': Project.objects.count(),
             'companies_count': ClientRequest.objects.filter(status=ClientStatusChoices.ACCEPTED)

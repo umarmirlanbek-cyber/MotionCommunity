@@ -14,13 +14,14 @@ class APILanguageMiddleware:
         if len(parts) >= 2 and parts[0] == 'api' and parts[1] in self.allowed:
             lang = parts[1]
 
+        translation.activate(lang or settings.LANGUAGE_CODE)
         if lang:
-            translation.activate(lang)
             request.LANGUAGE_CODE = lang
 
         response = self.get_response(request)
 
         if lang:
             response['Content-Language'] = lang
+        translation.deactivate()
 
         return response

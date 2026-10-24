@@ -1,11 +1,14 @@
+from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.urls import reverse
+from django.utils.html import format_html
 from modeltranslation.admin import TabbedTranslationAdmin
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, ClientRequest
 )
-from .services import task_created, task_changed, comment_created
+from .services import task_created, task_changed, comment_created, member_removed, task_file_token
 
 
 class WorkExperienceInline(admin.StackedInline):
@@ -70,6 +73,12 @@ class ProjectAdmin(TabbedTranslationAdmin):
     search_fields = ('name',)
     inlines = [ProjectMemberInline]
 
+    def save_formset(self, request, form, formset, change):
+        super().save_formset(request, form, formset, change)
+        if formset.model is ProjectMember:
+            for member in formset.deleted_objects:
+                member_removed(member, request.user)
+
 
 class TaskCommentInline(admin.TabularInline):
     model = TaskComment
@@ -80,7 +89,16 @@ class TaskCommentInline(admin.TabularInline):
 class TaskAttachmentInline(admin.TabularInline):
     model = TaskAttachment
     extra = 0
-    autocomplete_fields = ('author',)
+    fields = ('download', 'author', 'created_at')
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj):
+        return False
+
+    @admin.display(description='Файл')
+    def download(self, attachment):
+        url = reverse('task-file', kwargs={'lang': settings.LANGUAGE_CODE, 'token': task_file_token(attachment)})
+        return format_html('<a href="{}">{}</a>', url, attachment.name)
 
 
 class TaskHistoryInline(admin.TabularInline):

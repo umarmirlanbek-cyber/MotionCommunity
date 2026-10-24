@@ -50,7 +50,7 @@
 | GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status` |
 | PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки |
 | DELETE | `me/` | вошедший | Удалить свой аккаунт. Человек пропадёт из команд и проектов |
-| POST | `me/password/` | вошедший | `{old_password, new_password}` |
+| POST | `me/password/` | вошедший | `{old_password, new_password}`. Все refresh-токены отзываются: после смены пароля войдите заново |
 | POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
 | PATCH, DELETE | `me/work/{id}/` | вошедший | Изменить или удалить запись (только свою) |
 | POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы - числа (`2021`) |
@@ -72,7 +72,7 @@
 | --- | --- | --- | --- |
 | GET | `users/` | Admin | Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
 | POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` отзывает refresh-токены пользователя |
 
 ### Команды
 
@@ -116,7 +116,7 @@
 | DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
 | POST | `projects/{project_id}/tasks/{task_id}/attachments/` | участник проекта | `multipart/form-data` с полем `file` |
 | DELETE | `projects/{project_id}/tasks/{task_id}/attachments/{id}/` | автор файла, Admin или тимлид проекта | |
-| GET | `me/tasks/` | вошедший | Мои задачи во всех проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=`, `?type=` |
+| GET | `me/tasks/` | вошедший | Мои задачи во всех моих проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=`, `?type=`, `?label=` |
 
 #### Колонки, приоритеты и типы
 
@@ -249,7 +249,7 @@
 - `field`: `title`, `status`, `priority`, `type`, `labels`, `assignee` или `due_date`.
 - `old_value`, `new_value` - всегда строки:
   - для `status`, `priority` и `type` приходит значение (`In_progress`), подпись берите из `choices/`;
-  - для `assignee` - имя и фамилия, а если имя не заполнено - логин;
+  - для `assignee` - имя и логин: `Азамат Кубанычбеков (@dev1)`, а если имя не заполнено - только логин;
   - для `labels` - метки через запятую;
   - пустая строка - значения не было (без исполнителя, без срока).
 - `user` - кто поменял.
@@ -259,7 +259,7 @@
 #### Тип и метки
 
 - `type` - один из `task_types`. По умолчанию `Task`.
-- `labels` - список строк, например `["backend", "auth"]`. До 10 меток, каждая до 50 символов, повторы убираются сами.
+- `labels` - список строк, например `["backend", "auth"]`. До 10 меток, каждая до 50 символов и без запятых, повторы убираются сами.
   Задачу с метками отправляйте JSON-телом, не формой.
 - Метки свободные: новая появляется, когда её впервые поставили в задачу.
   `PATCH` с `labels` заменяет список целиком, `{"labels": []}` снимает все.
@@ -320,6 +320,7 @@
   Если меня упомянули, `Comment` на тот же комментарий уже не придёт.
 
 Себе уведомления не приходят: сам назначил себя или сам написал комментарий - ничего не будет.
+Уведомления приходят только участникам проекта. Кого убрали из проекта, того снимают с его задач в этом проекте (это видно в истории), и уведомления по проекту ему больше не приходят.
 
 ```json
 {

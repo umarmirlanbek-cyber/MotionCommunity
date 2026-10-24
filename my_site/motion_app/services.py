@@ -1,9 +1,11 @@
 import re
+from copy import copy
 
 from django.core.signing import TimestampSigner
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 from .choices import NotificationTypeChoices
-from .models import UserProfile, TaskHistory, Notification
+from .models import UserProfile, ProjectMember, Task, TaskHistory, Notification
 
 TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
 MENTION_RE = re.compile(r'(?<!\w)@([\w.+-]+)')
@@ -17,6 +19,8 @@ def history_value(task, field):
         return ''
     if field == 'labels':
         value = ', '.join(value)
+    elif field == 'assignee' and str(value) != value.username:
+        value = f'{value} (@{value.username})'
     return str(value)[:255]
 
 
@@ -52,11 +56,31 @@ def task_changed(old, task, actor):
 
 def comment_created(comment):
     task = comment.task
+    member_ids = set(ProjectMember.objects.filter(project_id=task.project_id).values_list('user_id', flat=True))
     names = {name.rstrip('.') for name in MENTION_RE.findall(comment.text)}
-    mentioned = list(UserProfile.objects.filter(username__in=names, project_memberships__project_id=task.project_id))
+    mentioned = list(UserProfile.objects.filter(username__in=names, id__in=member_ids))
     notify(mentioned, comment.author, task, NotificationTypeChoices.MENTION, comment)
-    others = [user for user in (task.assignee, task.author) if user not in mentioned]
+    others = [
+        user for user in (task.assignee, task.author)
+        if user and user.id in member_ids and user not in mentioned
+    ]
     notify(others, comment.author, task, NotificationTypeChoices.COMMENT, comment)
+
+
+def member_removed(member, actor):
+    tasks = Task.objects.filter(project_id=member.project_id, assignee_id=member.user_id).select_related('assignee')
+    for task in tasks:
+        old = copy(task)
+        task.assignee = None
+        task.save(update_fields=['assignee', 'updated_at'])
+        task_changed(old, task, actor)
+
+
+def revoke_tokens(user):
+    BlacklistedToken.objects.bulk_create([
+        BlacklistedToken(token=token)
+        for token in OutstandingToken.objects.filter(user=user, blacklistedtoken__isnull=True)
+    ])
 
 
 def task_file_token(attachment):

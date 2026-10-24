@@ -5,13 +5,14 @@ from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
-from django.core.validators import FileExtensionValidator
-from django.db.models.signals import post_delete
-from django.dispatch import receiver
+from django.core.validators import FileExtensionValidator, RegexValidator
+from django.db.models.signals import post_delete, pre_save
+from django.utils.deconstruct import deconstructible
 from phonenumber_field.modelfields import PhoneNumberField
 from .choices import (
     RoleChoices, StatusChoices, PositionChoices, MemberRoleChoices, ProjectStatusChoices,
-    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices, WorkingFormatChoices, LanguageLevelChoices
+    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices, NotificationTypeChoices, ClientStatusChoices,
+    WorkingFormatChoices, LanguageLevelChoices,
 )
 
 
@@ -24,8 +25,22 @@ def validate_file_size(file):
         raise ValidationError(f'Файл больше {MAX_FILE_SIZE_MB} МБ')
 
 
-def task_file_path(attachment, filename):
-    return f'task_files/{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}'
+validate_label = RegexValidator(r'^[^,]+$', 'Метка не может содержать запятую')
+
+
+@deconstructible
+class RandomName:
+    def __init__(self, folder):
+        self.folder = folder
+
+    def __call__(self, instance, filename):
+        return f'{self.folder}/{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}'
+
+    def __eq__(self, other):
+        return isinstance(other, RandomName) and self.folder == other.folder
+
+
+task_file_path = RandomName('task_files')
 
 
 class UserProfileManager(UserManager):
@@ -33,10 +48,13 @@ class UserProfileManager(UserManager):
         extra_fields.setdefault('role', RoleChoices.ADMIN)
         return super().create_superuser(username, email, password, **extra_fields)
 
+    def public(self):
+        return self.filter(role=RoleChoices.MEMBER, status=StatusChoices.ACTIVE, is_active=True)
+
 
 class UserProfile(AbstractUser):
     avatar = models.ImageField(
-        'Аватар участника', upload_to='members_image/', blank=True, null=True, validators=[validate_file_size]
+        'Аватар участника', upload_to=RandomName('members_image'), blank=True, null=True, validators=[validate_file_size]
     )
     bio = models.TextField('О себе', blank=True)
     position = models.CharField(
@@ -47,7 +65,7 @@ class UserProfile(AbstractUser):
     linkedin = models.URLField('Линкедин', blank=True, null=True)
     portfolio = models.URLField('Портфолио', blank=True, null=True)
     resume = models.FileField(
-        'Резюме', upload_to='resume/', blank=True, null=True,
+        'Резюме', upload_to=RandomName('resume'), blank=True, null=True,
         validators=[FileExtensionValidator(['pdf', 'doc', 'docx']), validate_file_size],
     )
     role = models.CharField(max_length=20, choices=RoleChoices.choices, default=RoleChoices.MEMBER)
@@ -122,7 +140,7 @@ class Certificate(models.Model):
     organization = models.CharField('Организация', max_length=150)
     issue_date = models.DateField('Дата выдачи')
     description = models.TextField('Описание', blank=True)
-    image = models.ImageField('Скан сертификата', upload_to='certificates/', validators=[validate_file_size])
+    image = models.ImageField('Скан сертификата', upload_to=RandomName('certificates'), validators=[validate_file_size])
 
     class Meta:
         ordering = ['-issue_date']
@@ -137,7 +155,7 @@ class Team(models.Model):
     name = models.CharField('Название команды', max_length=255)
     description = models.TextField('Описание', blank=True)
     image = models.ImageField(
-        'Фото команды', upload_to='team_image/', blank=True, null=True, validators=[validate_file_size]
+        'Фото команды', upload_to=RandomName('team_image'), blank=True, null=True, validators=[validate_file_size]
     )
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
 
@@ -172,7 +190,7 @@ class Project(models.Model):
     status = models.CharField(max_length=20, choices=ProjectStatusChoices.choices, default=ProjectStatusChoices.PLANNED)
     category = models.CharField('Категория', max_length=150)
     image = models.ImageField(
-        'Изображение', upload_to='preview_image/', blank=True, null=True, validators=[validate_file_size]
+        'Изображение', upload_to=RandomName('preview_image'), blank=True, null=True, validators=[validate_file_size]
     )
     demo_url = models.URLField('Демо', blank=True, null=True)
     github_url = models.URLField('Гитхаб', blank=True, null=True)
@@ -207,7 +225,10 @@ class Task(models.Model):
     status = models.CharField(max_length=20, choices=TaskStatusChoices.choices, default=TaskStatusChoices.TO_DO)
     priority = models.CharField(max_length=20, choices=TaskPriorityChoices.choices, default=TaskPriorityChoices.MEDIUM)
     type = models.CharField(max_length=20, choices=TaskTypeChoices.choices, default=TaskTypeChoices.TASK)
-    labels = ArrayField(models.CharField(max_length=50), verbose_name='Метки', blank=True, default=list)
+    labels = ArrayField(
+        models.CharField(max_length=50, validators=[validate_label]), size=10, verbose_name='Метки', blank=True,
+        default=list,
+    )
     assignee = models.ForeignKey(
         UserProfile, on_delete=models.SET_NULL, related_name='assigned_tasks', null=True, blank=True
     )
@@ -222,6 +243,12 @@ class Task(models.Model):
 
     def __str__(self):
         return self.title
+
+    def clean(self):
+        if self.assignee_id and not ProjectMember.objects.filter(
+            project_id=self.project_id, user_id=self.assignee_id
+        ).exists():
+            raise ValidationError({'assignee': 'Исполнитель должен состоять в проекте'})
 
 
 class TaskComment(models.Model):
@@ -241,7 +268,7 @@ class TaskAttachment(models.Model):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='attachments')
     author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_attachments', null=True)
     file = models.FileField(
-        'Файл', upload_to=task_file_path,
+        'Файл', upload_to=task_file_path, max_length=255,
         validators=[FileExtensionValidator(ATTACHMENT_EXTENSIONS), validate_file_size],
     )
     name = models.CharField('Имя файла', max_length=255, blank=True)
@@ -259,9 +286,6 @@ class TaskAttachment(models.Model):
         super().save(*args, **kwargs)
 
 
-@receiver(post_delete, sender=TaskAttachment)
-def delete_attachment_file(sender, instance, **kwargs):
-    transaction.on_commit(lambda: instance.file.delete(save=False))
 
 
 class TaskHistory(models.Model):
@@ -319,3 +343,41 @@ class ClientRequest(models.Model):
 
     def __str__(self):
         return f'{self.name} - {self.title}'
+
+
+# ---------- Файлы ----------
+
+FILE_FIELDS = {
+    UserProfile: ('avatar', 'resume'),
+    Certificate: ('image',),
+    Team: ('image',),
+    Project: ('image',),
+    TaskAttachment: ('file',),
+}
+
+
+def delete_file_on_commit(storage, name):
+    if name:
+        transaction.on_commit(lambda: storage.delete(name))
+
+
+def delete_replaced_files(sender, instance, update_fields=None, **kwargs):
+    fields = [field for field in FILE_FIELDS[sender] if update_fields is None or field in update_fields]
+    if not instance.pk or not fields:
+        return
+    old = sender.objects.filter(pk=instance.pk).values(*fields).first() or {}
+    for field in fields:
+        file = getattr(instance, field)
+        if old.get(field) and old[field] != file.name:
+            delete_file_on_commit(file.storage, old[field])
+
+
+def delete_files(sender, instance, **kwargs):
+    for field in FILE_FIELDS[sender]:
+        file = getattr(instance, field)
+        delete_file_on_commit(file.storage, file.name)
+
+
+for model in FILE_FIELDS:
+    pre_save.connect(delete_replaced_files, sender=model)
+    post_delete.connect(delete_files, sender=model)
