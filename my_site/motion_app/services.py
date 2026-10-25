@@ -90,12 +90,19 @@ def member_removed(member, actor):
     ])
 
 
-def check_not_last_admin(user):
+LAST_ADMIN_ERROR = 'Нельзя удалить или понизить последнего Admin'
+
+
+def is_last_admin(user):
     if user.role != RoleChoices.ADMIN:
-        return
+        return False
     admins = UserProfile.objects.select_for_update().filter(role=RoleChoices.ADMIN, is_active=True).order_by('pk')
-    if not [pk for pk in admins.values_list('pk', flat=True) if pk != user.pk]:
-        raise ValidationError({'detail': 'Нельзя удалить или понизить последнего Admin'})
+    return not [pk for pk in admins.values_list('pk', flat=True) if pk != user.pk]
+
+
+def check_not_last_admin(user):
+    if is_last_admin(user):
+        raise ValidationError({'detail': LAST_ADMIN_ERROR})
 
 
 def task_file_url(attachment):

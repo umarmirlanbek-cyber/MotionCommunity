@@ -1,12 +1,17 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.forms import UserChangeForm
 from django.utils.html import format_html
 from modeltranslation.admin import TabbedTranslationAdmin
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, ClientRequest
 )
-from .services import task_created, task_changed, comment_created, member_removed, task_file_url
+from .choices import RoleChoices
+from .services import (
+    task_created, task_changed, comment_created, member_removed, task_file_url, is_last_admin, LAST_ADMIN_ERROR,
+)
 
 
 class WorkExperienceInline(admin.StackedInline):
@@ -29,8 +34,18 @@ class CertificateInline(admin.StackedInline):
     extra = 0
 
 
+class UserProfileChangeForm(UserChangeForm):
+    def clean(self):
+        cleaned_data = super().clean()
+        demoted = cleaned_data.get('role', self.instance.role) != RoleChoices.ADMIN
+        if (demoted or not cleaned_data.get('is_active', self.instance.is_active)) and is_last_admin(self.instance):
+            raise forms.ValidationError(LAST_ADMIN_ERROR)
+        return cleaned_data
+
+
 @admin.register(UserProfile)
 class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
+    form = UserProfileChangeForm
     list_display = ('username', 'first_name', 'last_name', 'role', 'status', 'is_active')
     list_filter = ('role', 'status', 'is_active')
     fieldsets = (
@@ -43,6 +58,15 @@ class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
 
     def get_inlines(self, request, obj):
         return self.inlines if obj else []
+
+    def get_deleted_objects(self, objs, request):
+        deleted, model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
+        admins_left = UserProfile.objects.filter(role=RoleChoices.ADMIN, is_active=True).exclude(
+            pk__in=[user.pk for user in objs]
+        )
+        if any(user.role == RoleChoices.ADMIN for user in objs) and not admins_left.exists():
+            perms_needed.add(LAST_ADMIN_ERROR)
+        return deleted, model_count, perms_needed, protected
 
 
 class TeamMemberInline(admin.TabularInline):
