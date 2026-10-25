@@ -94,7 +94,7 @@
 | GET | `projects/` | все | Фильтры `?status=`, `?category=`, `?team=`, `?search=`, `?ordering=name` или `-created_at` |
 | POST | `projects/` | Admin | `{name, description, category, status, team_id, image, demo_url, github_url}` |
 | GET | `projects/{id}/` | все | Проект + `team` + `members` |
-| PATCH | `projects/{id}/` | Admin или тимлид проекта | Любые поля. `team_id` меняет только Admin, тимлид получит `403` |
+| PATCH | `projects/{id}/` | Admin или тимлид проекта | Любые поля. `team_id` меняет только Admin: если тимлид пришлёт другую команду, получит `403`, текущую можно присылать в форме как есть |
 | DELETE | `projects/{id}/` | Admin | |
 | GET | `projects/{project_id}/members/` | все | Состав |
 | POST, PATCH, DELETE | `projects/{project_id}/members/...` | как у команд | Правила те же, что у команд |

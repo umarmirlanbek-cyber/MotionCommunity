@@ -19,8 +19,8 @@ from motion_app.models import (
     Task, TaskComment, ClientRequest
 )
 from motion_app.choices import (
-    MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices,
-    TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices
+    MemberRoleChoices, StatusChoices, ClientStatusChoices, LanguageLevelChoices, PositionChoices,
+    ProjectStatusChoices, TaskStatusChoices, TaskPriorityChoices, TaskTypeChoices
 )
 
 
@@ -79,7 +79,7 @@ class Command(BaseCommand):
                 last_name=last,
                 position=position,
                 status=StatusChoices.ACTIVE,
-                bio=bio.format(first=first, last=last, position=position.replace('_', ' ')),
+                bio=bio.format(first=first, last=last, position=PositionChoices(position).label),
             )
             for username, first, last, position in data
         ]
@@ -126,15 +126,15 @@ class Command(BaseCommand):
 
     def create_projects(self):
         data = [
-            ('Motion LMS Platform', 'Planned', 'Education',
+            ('Motion LMS Platform', ProjectStatusChoices.PLANNED, 'Education',
                 'Платформа для онлайн-обучения студентов Motion с курсами и тестами.'),
-            ('Motion Community Portal', 'In_progress', 'Web',
+            ('Motion Community Portal', ProjectStatusChoices.IN_PROGRESS, 'Web',
                 'Портал сообщества с профилями участников и проектами.'),
-            ('Motion Mobile Companion', 'In_progress', 'Mobile',
+            ('Motion Mobile Companion', ProjectStatusChoices.IN_PROGRESS, 'Mobile',
                 'Мобильное приложение-компаньон для участников Motion.'),
-            ('Motion Analytics Dashboard', 'Completed', 'Analytics',
+            ('Motion Analytics Dashboard', ProjectStatusChoices.COMPLETED, 'Analytics',
                 'Дашборд аналитики успеваемости и активности студентов.'),
-            ('Motion Marketplace', 'Paused', 'E-commerce',
+            ('Motion Marketplace', ProjectStatusChoices.PAUSED, 'E-commerce',
                 'Маркетплейс для продажи цифровых продуктов выпускников.'),
         ]
         return [

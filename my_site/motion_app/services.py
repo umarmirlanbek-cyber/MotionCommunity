@@ -59,7 +59,7 @@ def task_changed(old, task, actor):
 
 def comment_created(comment):
     task = comment.task
-    names = list({name.rstrip('.') for name in MENTION_RE.findall(comment.text)})[:MAX_MENTIONS]
+    names = list(dict.fromkeys(name.rstrip('.') for name in MENTION_RE.findall(comment.text)))[:MAX_MENTIONS]
     mentioned = list(UserProfile.objects.filter(username__in=names, project_memberships__project_id=task.project_id))
     notify(mentioned, comment.author, task, NotificationTypeChoices.MENTION, comment)
     member_ids = set(ProjectMember.objects.filter(
@@ -72,8 +72,8 @@ def comment_created(comment):
     notify(others, comment.author, task, NotificationTypeChoices.COMMENT, comment)
 
 
-def visible_notifications(user):
-    return Notification.objects.filter(user=user, task__project__members__user=user)
+def visible_notifications(user_id):
+    return Notification.objects.filter(user_id=user_id, task__project__members__user_id=user_id)
 
 
 def member_removed(member, actor):
@@ -91,9 +91,10 @@ def member_removed(member, actor):
 
 
 def check_not_last_admin(user):
-    if user.role == RoleChoices.ADMIN and not UserProfile.objects.filter(
-        role=RoleChoices.ADMIN, is_active=True
-    ).exclude(pk=user.pk).exists():
+    if user.role != RoleChoices.ADMIN:
+        return
+    admins = UserProfile.objects.select_for_update().filter(role=RoleChoices.ADMIN, is_active=True).order_by('pk')
+    if not [pk for pk in admins.values_list('pk', flat=True) if pk != user.pk]:
         raise ValidationError({'detail': 'Нельзя удалить или понизить последнего Admin'})
 
 

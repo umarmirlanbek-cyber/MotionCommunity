@@ -130,7 +130,6 @@ LANGUAGES = (
 )
 
 
-
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
@@ -142,17 +141,6 @@ PRIVATE_MEDIA_ROOT = BASE_DIR / 'private_media'
 TASK_FILES_X_ACCEL = os.getenv('TASK_FILES_X_ACCEL', 'False').lower() in ('true', '1', 'yes')
 
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
-    'default': {
-        'BACKEND': (
-            'django.core.mail.backends.console.EmailBackend' if DEBUG
-            else 'django.core.mail.backends.smtp.EmailBackend'
-        ),
-    },
-}
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',

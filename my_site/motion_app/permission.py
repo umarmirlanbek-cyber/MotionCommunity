@@ -58,10 +58,8 @@ class IsAuthorOrProjectTeamLead(BasePermission):
         return obj.author_id == request.user.id or IsAdminOrProjectTeamLead().has_permission(request, view)
 
 
-class CanEditTask(BasePermission):
+class CanEditTask(IsAuthorOrProjectTeamLead):
     message = 'Менять можно только свои задачи'
 
     def has_object_permission(self, request, view, obj):
-        if request.user.id in (obj.assignee_id, obj.author_id):
-            return True
-        return IsAdminOrProjectTeamLead().has_permission(request, view)
+        return obj.assignee_id == request.user.id or super().has_object_permission(request, view, obj)

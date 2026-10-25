@@ -7,15 +7,21 @@ from django.db import migrations
 from motion_app.models import PrivateStorage
 
 
-def move_task_files(apps, schema_editor):
+def move_files(apps, source, target):
     TaskAttachment = apps.get_model('motion_app', 'TaskAttachment')
-    public = FileSystemStorage(location=settings.MEDIA_ROOT)
-    private = PrivateStorage()
     for name in TaskAttachment.objects.values_list('file', flat=True):
-        if name and public.exists(name) and not private.exists(name):
-            with public.open(name) as file:
-                private.save(name, file)
-            public.delete(name)
+        if name and source.exists(name) and not target.exists(name):
+            with source.open(name) as file:
+                target.save(name, file)
+            source.delete(name)
+
+
+def move_task_files(apps, schema_editor):
+    move_files(apps, FileSystemStorage(location=settings.MEDIA_ROOT), PrivateStorage())
+
+
+def move_task_files_back(apps, schema_editor):
+    move_files(apps, PrivateStorage(), FileSystemStorage(location=settings.MEDIA_ROOT))
 
 
 class Migration(migrations.Migration):
@@ -25,5 +31,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(move_task_files, migrations.RunPython.noop),
+        migrations.RunPython(move_task_files, move_task_files_back),
     ]

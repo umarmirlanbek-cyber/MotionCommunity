@@ -23,6 +23,9 @@ from .choices import (
 
 
 MAX_FILE_SIZE_MB = 5
+MAX_LABELS = 10
+MAX_LABEL_LENGTH = 50
+ASSIGNEE_NOT_MEMBER = 'Исполнитель должен состоять в проекте'
 ATTACHMENT_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'zip']
 
 
@@ -256,8 +259,8 @@ class Task(models.Model):
     priority = models.CharField(max_length=20, choices=TaskPriorityChoices.choices, default=TaskPriorityChoices.MEDIUM)
     type = models.CharField(max_length=20, choices=TaskTypeChoices.choices, default=TaskTypeChoices.TASK)
     labels = ArrayField(
-        models.CharField(max_length=50, validators=[validate_label]), size=10, verbose_name='Метки', blank=True,
-        default=list,
+        models.CharField(max_length=MAX_LABEL_LENGTH, validators=[validate_label]), size=MAX_LABELS,
+        verbose_name='Метки', blank=True, default=list,
     )
     assignee = models.ForeignKey(
         UserProfile, on_delete=models.SET_NULL, related_name='assigned_tasks', null=True, blank=True
@@ -276,10 +279,16 @@ class Task(models.Model):
         return self.title
 
     def clean(self):
-        if self.assignee_id and not ProjectMember.objects.filter(
-            project_id=self.project_id, user_id=self.assignee_id
-        ).exists():
-            raise ValidationError({'assignee': 'Исполнитель должен состоять в проекте'})
+        current = Task.objects.filter(pk=self.pk).values_list('assignee_id', flat=True).first()
+        if not can_be_assignee(self.project_id, self.assignee_id, current):
+            raise ValidationError({'assignee': ASSIGNEE_NOT_MEMBER})
+
+
+def can_be_assignee(project_id, user_id, current_assignee_id=None, lock=False):
+    if not user_id or user_id == current_assignee_id:
+        return True
+    members = ProjectMember.objects.select_for_update() if lock else ProjectMember.objects
+    return members.filter(project_id=project_id, user_id=user_id).exists()
 
 
 class TaskComment(models.Model):
