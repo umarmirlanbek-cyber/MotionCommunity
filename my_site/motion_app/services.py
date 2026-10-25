@@ -93,15 +93,18 @@ def member_removed(member, actor):
 LAST_ADMIN_ERROR = 'Нельзя удалить или понизить последнего Admin'
 
 
-def is_last_admin(user):
-    if user.role != RoleChoices.ADMIN:
+def leaves_no_admin(users, lock=False):
+    if not any(user.role == RoleChoices.ADMIN for user in users):
         return False
-    admins = UserProfile.objects.select_for_update().filter(role=RoleChoices.ADMIN, is_active=True).order_by('pk')
-    return not [pk for pk in admins.values_list('pk', flat=True) if pk != user.pk]
+    admins = UserProfile.objects.filter(role=RoleChoices.ADMIN, is_active=True).order_by('pk')
+    if lock:
+        admins = admins.select_for_update()
+    removed = {user.pk for user in users}
+    return not [pk for pk in admins.values_list('pk', flat=True) if pk not in removed]
 
 
 def check_not_last_admin(user):
-    if is_last_admin(user):
+    if leaves_no_admin([user], lock=True):
         raise ValidationError({'detail': LAST_ADMIN_ERROR})
 
 

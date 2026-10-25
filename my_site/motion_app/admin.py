@@ -1,7 +1,11 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.contrib.admin.actions import delete_selected
+from django.contrib.admin.utils import unquote
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import format_html
 from modeltranslation.admin import TabbedTranslationAdmin
 from .models import (
@@ -10,7 +14,7 @@ from .models import (
 )
 from .choices import RoleChoices
 from .services import (
-    task_created, task_changed, comment_created, member_removed, task_file_url, is_last_admin, LAST_ADMIN_ERROR,
+    task_created, task_changed, comment_created, member_removed, task_file_url, leaves_no_admin, LAST_ADMIN_ERROR,
 )
 
 
@@ -38,9 +42,17 @@ class UserProfileChangeForm(UserChangeForm):
     def clean(self):
         cleaned_data = super().clean()
         demoted = cleaned_data.get('role', self.instance.role) != RoleChoices.ADMIN
-        if (demoted or not cleaned_data.get('is_active', self.instance.is_active)) and is_last_admin(self.instance):
+        removed = demoted or not cleaned_data.get('is_active', self.instance.is_active)
+        if removed and leaves_no_admin([self.instance], lock=True):
             raise forms.ValidationError(LAST_ADMIN_ERROR)
         return cleaned_data
+
+
+def delete_selected_users(modeladmin, request, queryset):
+    if leaves_no_admin(list(queryset)):
+        modeladmin.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
+        return None
+    return delete_selected(modeladmin, request, queryset)
 
 
 @admin.register(UserProfile)
@@ -59,14 +71,18 @@ class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
     def get_inlines(self, request, obj):
         return self.inlines if obj else []
 
-    def get_deleted_objects(self, objs, request):
-        deleted, model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
-        admins_left = UserProfile.objects.filter(role=RoleChoices.ADMIN, is_active=True).exclude(
-            pk__in=[user.pk for user in objs]
-        )
-        if any(user.role == RoleChoices.ADMIN for user in objs) and not admins_left.exists():
-            perms_needed.add(LAST_ADMIN_ERROR)
-        return deleted, model_count, perms_needed, protected
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            actions['delete_selected'] = (delete_selected_users, *actions['delete_selected'][1:])
+        return actions
+
+    def delete_view(self, request, object_id, extra_context=None):
+        user = self.get_object(request, unquote(object_id))
+        if user and leaves_no_admin([user]):
+            self.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
+            return HttpResponseRedirect(reverse('admin:motion_app_userprofile_change', args=[user.pk]))
+        return super().delete_view(request, object_id, extra_context)
 
 
 class TeamMemberInline(admin.TabularInline):
