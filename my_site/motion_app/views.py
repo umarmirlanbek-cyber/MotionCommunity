@@ -10,6 +10,7 @@ from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import translation
 from django.utils.http import content_disposition_header
+from urllib.parse import quote
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -29,7 +30,7 @@ from .choices import (
 )
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
-    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, Notification, ClientRequest,
+    Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, ClientRequest,
     revoke_tokens,
 )
 from .filters import TaskFilter, MyTaskFilter
@@ -103,7 +104,6 @@ PROFILE_PREFETCH = (
 
 
 class MeView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = UserProfile.objects.all()
     serializer_class = MeSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'patch', 'delete']
@@ -150,9 +150,7 @@ class MyResumeViewSet(
     lookup_value_regex = r'\d+'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return self.model.objects.none()
-        return self.model.objects.filter(user=self.request.user)
+        return self.model.objects.filter(user_id=self.request.user.id)
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -215,6 +213,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         check_not_last_admin(instance)
+        revoke_tokens(instance)
         instance.delete()
 
 
@@ -350,7 +349,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return queryset.prefetch_related(Prefetch('members', queryset=ProjectMember.objects.select_related('user')))
 
     def perform_update(self, serializer):
-        if 'team' in serializer.validated_data and not is_admin(self.request.user):
+        team = serializer.validated_data.get('team', serializer.instance.team)
+        if getattr(team, 'pk', None) != serializer.instance.team_id and not is_admin(self.request.user):
             raise PermissionDenied('Менять команду проекта может только Admin')
         project = serializer.save()
         serializer.instance = self.with_details(self.queryset).get(pk=project.pk)
@@ -492,7 +492,7 @@ class TaskFileView(APIView):
         if settings.TASK_FILES_X_ACCEL:
             content_type = mimetypes.guess_type(attachment.file.name)[0] or 'application/octet-stream'
             response = HttpResponse(content_type=content_type)
-            response['X-Accel-Redirect'] = f'/private/{attachment.file.name}'
+            response['X-Accel-Redirect'] = f'/private/{quote(attachment.file.name)}'
             response['Content-Disposition'] = content_disposition_header(True, attachment.name)
             return response
         return FileResponse(attachment.file.open('rb'), as_attachment=True, filename=attachment.name)
@@ -505,10 +505,8 @@ class MyTaskListAPIView(generics.ListAPIView):
     filterset_class = MyTaskFilter
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return Task.objects.none()
         return Task.objects.filter(
-            assignee=self.request.user, project__members__user=self.request.user
+            assignee_id=self.request.user.id, project__members__user_id=self.request.user.id
         ).select_related('assignee', 'project')
 
 
@@ -523,16 +521,14 @@ class NotificationViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, viewse
     filterset_fields = ['is_read', 'type']
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return Notification.objects.none()
-        return visible_notifications(self.request.user).select_related('actor', 'task__project', 'comment')
+        return visible_notifications(self.request.user.id).select_related('actor', 'task__project', 'comment')
 
 
 class NotificationReadAllView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        updated = visible_notifications(request.user).filter(is_read=False).update(is_read=True)
+        updated = visible_notifications(request.user.id).filter(is_read=False).update(is_read=True)
         return Response({'updated': updated})
 
 

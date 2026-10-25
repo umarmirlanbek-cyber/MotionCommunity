@@ -2,12 +2,14 @@ import os
 import tempfile
 from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.admin import site
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import connection
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signing import TimestampSigner
 from django.test import RequestFactory, override_settings
@@ -23,10 +25,10 @@ from .choices import (
 from .admin import TaskAdmin, TaskAttachmentInline
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
-    TaskHistory, Notification, ClientRequest,
+    TaskHistory, Notification, ClientRequest, PrivateStorage,
 )
 from .permission import project_role
-from .services import task_file_signer
+from .services import task_file_signer, task_file_url
 from .swagger import TAG_NAMES
 
 
@@ -309,6 +311,12 @@ class UsersAdminTests(MotionTestCase):
         make_user('admin2', role=RoleChoices.ADMIN)
         self.assertEqual(self.client.patch(url, {'role': RoleChoices.MEMBER}).status_code, status.HTTP_200_OK)
 
+    def test_admin_delete_revokes_refresh_tokens(self):
+        refresh = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'Pass12345!word'}).data['refresh']
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(f'/api/ru/users/{self.member.id}/').status_code, 204)
+        self.assertTrue(BlacklistedToken.objects.filter(token__token=refresh).exists())
+
     def test_admin_deletes_user_in_team(self):
         TeamMember.objects.create(team=Team.objects.create(name='Alpha'), user=self.member)
         self.client.force_authenticate(self.admin)
@@ -477,8 +485,13 @@ class ProjectTests(MotionTestCase):
         other = Team.objects.create(name='Beta')
         self.client.force_authenticate(self.lead)
         self.assertEqual(self.client.patch(self.url, {'team_id': other.id}).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.patch(self.url, {'team_id': self.team.id}).status_code, status.HTTP_200_OK)
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.patch(self.url, {'team_id': other.id}).data['team']['id'], other.id)
+
+    def test_ids_in_urls_must_be_numbers(self):
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.patch('/api/ru/projects/abc/', {'name': 'X'}).status_code, 404)
 
     def test_member_and_foreign_lead_cannot_edit(self):
         other = Project.objects.create(name='Shop', description='d', category='Web')
@@ -765,10 +778,6 @@ class TaskTests(ProjectTestCase):
         response = self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': self.member.id, 'title': 'X'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_ids_in_urls_must_be_numbers(self):
-        self.client.force_authenticate(self.member)
-        self.assertEqual(self.client.patch('/api/ru/projects/abc/', {'name': 'X'}).status_code, 404)
-
     def test_my_tasks(self):
         other = Project.objects.create(name='Shop', description='d', category='Web')
         ProjectMember.objects.create(project=other, user=self.member)
@@ -899,6 +908,15 @@ class TaskAttachmentTests(ProjectTestCase):
         self.assertEqual(served['X-Accel-Redirect'], f'/private/{attachment.file.name}')
         self.assertEqual(served['Content-Type'], 'image/png')
         self.assertIn('attachment', served['Content-Disposition'])
+
+    def test_old_file_with_cyrillic_name_goes_through_nginx(self):
+        name = PrivateStorage().save('task_files/Отчёт за май.pdf', ContentFile(b'data'))
+        attachment = TaskAttachment.objects.create(task=self.task, author=self.member, file=name)
+        with self.settings(TASK_FILES_X_ACCEL=True):
+            served = self.client.get(task_file_url(attachment))
+        self.assertEqual(served.status_code, status.HTTP_200_OK)
+        self.assertEqual(served['X-Accel-Redirect'], f'/private/{quote(name)}')
+        self.assertIn('filename*=utf-8', served['Content-Disposition'])
 
     def test_author_deletes_own_file(self):
         self.client.force_authenticate(self.member)

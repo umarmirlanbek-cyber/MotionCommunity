@@ -4,6 +4,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 from .choices import RoleChoices, StatusChoices, ClientStatusChoices
 from .models import (
+    MAX_LABELS, MAX_LABEL_LENGTH, ASSIGNEE_NOT_MEMBER, can_be_assignee,
     UserProfile, WorkExperience, Education, Language, Certificate, validate_label,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification,
     ClientRequest,
@@ -55,6 +56,14 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 # ---------- Резюме ----------
 
+def check_end_after_start(serializer, attrs, start_field, end_field, message):
+    start = attrs.get(start_field, getattr(serializer.instance, start_field, None))
+    end = attrs.get(end_field, getattr(serializer.instance, end_field, None))
+    if start and end and end < start:
+        raise serializers.ValidationError({end_field: message})
+    return attrs
+
+
 class WorkExperienceSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkExperience
@@ -64,11 +73,7 @@ class WorkExperienceSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        start = attrs.get('start_date', getattr(self.instance, 'start_date', None))
-        end = attrs.get('end_date', getattr(self.instance, 'end_date', None))
-        if start and end and end < start:
-            raise serializers.ValidationError({'end_date': 'Дата окончания раньше даты начала'})
-        return attrs
+        return check_end_after_start(self, attrs, 'start_date', 'end_date', 'Дата окончания раньше даты начала')
 
 
 class EducationSerializer(serializers.ModelSerializer):
@@ -80,11 +85,7 @@ class EducationSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        start = attrs.get('start_year', getattr(self.instance, 'start_year', None))
-        end = attrs.get('end_year', getattr(self.instance, 'end_year', None))
-        if start and end and end < start:
-            raise serializers.ValidationError({'end_year': 'Год окончания раньше года начала'})
-        return attrs
+        return check_end_after_start(self, attrs, 'start_year', 'end_year', 'Год окончания раньше года начала')
 
 
 class LanguageSerializer(serializers.ModelSerializer):
@@ -345,7 +346,8 @@ class TaskDetailSerializer(serializers.ModelSerializer):
         source='assignee', queryset=UserProfile.objects.all(), write_only=True, required=False, allow_null=True
     )
     labels = serializers.ListField(
-        child=serializers.CharField(max_length=50, validators=[validate_label]), max_length=10, required=False
+        child=serializers.CharField(max_length=MAX_LABEL_LENGTH, validators=[validate_label]),
+        max_length=MAX_LABELS, required=False,
     )
     author = MemberShortSerializer(read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
@@ -361,10 +363,9 @@ class TaskDetailSerializer(serializers.ModelSerializer):
 
     def validate_assignee_id(self, user):
         project_id = self.context['view'].kwargs['project_id']
-        if self.instance and user and user.pk == self.instance.assignee_id:
-            return user
-        if user and not ProjectMember.objects.select_for_update().filter(project_id=project_id, user=user).exists():
-            raise serializers.ValidationError('Исполнитель должен состоять в проекте')
+        current = self.instance.assignee_id if self.instance else None
+        if user and not can_be_assignee(project_id, user.pk, current, lock=True):
+            raise serializers.ValidationError(ASSIGNEE_NOT_MEMBER)
         return user
 
     def validate_labels(self, labels):
