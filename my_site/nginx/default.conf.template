@@ -53,6 +53,12 @@ server {
         return 404;
     }
 
+    location /private/ {
+        internal;
+        alias /app/private_media/;
+        add_header X-Content-Type-Options nosniff;
+    }
+
     location = /admin/login/ {
         limit_req zone=admin_login burst=5 nodelay;
         limit_req_status 429;

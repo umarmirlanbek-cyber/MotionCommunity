@@ -2,10 +2,13 @@ import os
 import uuid
 from functools import cache
 
+from django.conf import settings
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.indexes import GinIndex
 from django.core.exceptions import ValidationError
+from django.core.files.storage import FileSystemStorage
 from django.core.validators import FileExtensionValidator, RegexValidator
 from django.db.models.signals import post_delete, pre_save
 from django.utils import timezone
@@ -44,6 +47,20 @@ class RandomName:
 
 
 task_file_path = RandomName('task_files')
+
+
+@deconstructible
+class PrivateStorage(FileSystemStorage):
+    def __init__(self):
+        super().__init__(base_url='/private/')
+
+    @property
+    def base_location(self):
+        return settings.PRIVATE_MEDIA_ROOT
+
+    @property
+    def location(self):
+        return os.path.abspath(self.base_location)
 
 
 class UserProfileManager(UserManager):
@@ -88,13 +105,15 @@ class UserProfile(AbstractUser):
         self.is_superuser = self.role == RoleChoices.ADMIN
         password_changed = self.pk is not None and self._password is not None
         super().save(*args, **kwargs)
-        if password_changed:
+        if password_changed or not self.is_active:
             revoke_tokens(self)
 
 
 def revoke_tokens(user):
     tokens = OutstandingToken.objects.filter(user=user, blacklistedtoken__isnull=True, expires_at__gt=timezone.now())
-    BlacklistedToken.objects.bulk_create([BlacklistedToken(token_id=pk) for pk in tokens.values_list('pk', flat=True)])
+    BlacklistedToken.objects.bulk_create(
+        [BlacklistedToken(token_id=pk) for pk in tokens.values_list('pk', flat=True)], ignore_conflicts=True
+    )
 
 
 # ---------- Резюме: опыт, образование, языки, сертификаты ----------
@@ -251,6 +270,7 @@ class Task(models.Model):
 
     class Meta:
         ordering = ['order', 'id']
+        indexes = [GinIndex(fields=['labels'])]
 
     def __str__(self):
         return self.title
@@ -279,7 +299,7 @@ class TaskAttachment(models.Model):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='attachments')
     author = models.ForeignKey(UserProfile, on_delete=models.SET_NULL, related_name='task_attachments', null=True)
     file = models.FileField(
-        'Файл', upload_to=task_file_path, max_length=255,
+        'Файл', upload_to=task_file_path, storage=PrivateStorage(), max_length=255,
         validators=[FileExtensionValidator(ATTACHMENT_EXTENSIONS), validate_file_size],
     )
     name = models.CharField('Имя файла', max_length=255, blank=True)
@@ -295,8 +315,6 @@ class TaskAttachment(models.Model):
         if not self.name:
             self.name = os.path.basename(self.file.name)[:255]
         super().save(*args, **kwargs)
-
-
 
 
 class TaskHistory(models.Model):
@@ -327,6 +345,7 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['user', 'is_read', '-created_at'])]
 
     def __str__(self):
         return f'{self.user} - {self.type}'

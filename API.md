@@ -38,7 +38,7 @@
 | --- | --- | --- | --- |
 | POST | `auth/login/` | все | `{username, password}` → `{access, refresh, user: {id, username, role, status}}`. Не больше 10 попыток в минуту |
 | POST | `auth/refresh/` | все | `{refresh}` → `{access}` |
-| POST | `auth/logout/` | вошедший | `{refresh}` → `205` |
+| POST | `auth/logout/` | все | `{refresh}` → `205`. Токен access не нужен, выйти можно и с истёкшим. Неверный или уже отозванный refresh → `400` |
 | GET | `auth/verify/` | вошедший | `{id, username, role}` - для сервиса чата |
 
 ### Личный кабинет
@@ -72,7 +72,7 @@
 | --- | --- | --- | --- |
 | GET | `users/` | Admin | Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
 | POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` отзывает refresh-токены пользователя |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают refresh-токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
 
 ### Команды
 
@@ -83,7 +83,7 @@
 | GET | `teams/{id}/` | вошедший | Команда + `members` + `projects` |
 | PATCH, DELETE | `teams/{id}/` | Admin | При удалении проекты остаются, просто без команды |
 | GET | `teams/{team_id}/members/` | вошедший | Состав |
-| POST | `teams/{team_id}/members/` | Admin или тимлид этой команды | `{user_id, role}`. Назначить `Team_Lead` может только Admin |
+| POST | `teams/{team_id}/members/` | Admin или тимлид этой команды | `{user_id, role}`. Назначить `Team_Lead` может только Admin. Заблокированного пользователя добавить нельзя → `400` |
 | PATCH | `teams/{team_id}/members/{user_id}/` | Admin | `{role}` |
 | DELETE | `teams/{team_id}/members/{user_id}/` | Admin или тимлид | Тимлид не может убрать другого тимлида |
 
@@ -94,7 +94,7 @@
 | GET | `projects/` | все | Фильтры `?status=`, `?category=`, `?team=`, `?search=`, `?ordering=name` или `-created_at` |
 | POST | `projects/` | Admin | `{name, description, category, status, team_id, image, demo_url, github_url}` |
 | GET | `projects/{id}/` | все | Проект + `team` + `members` |
-| PATCH | `projects/{id}/` | Admin или тимлид проекта | Любые поля |
+| PATCH | `projects/{id}/` | Admin или тимлид проекта | Любые поля. `team_id` меняет только Admin, тимлид получит `403` |
 | DELETE | `projects/{id}/` | Admin | |
 | GET | `projects/{project_id}/members/` | все | Состав |
 | POST, PATCH, DELETE | `projects/{project_id}/members/...` | как у команд | Правила те же, что у команд |
@@ -320,7 +320,7 @@
   Если меня упомянули, `Comment` на тот же комментарий уже не придёт.
 
 Себе уведомления не приходят: сам назначил себя или сам написал комментарий - ничего не будет.
-Уведомления приходят только участникам проекта. Кого убрали из проекта, того снимают с его задач в этом проекте (это видно в истории), и уведомления по проекту ему больше не приходят.
+Уведомления приходят только участникам проекта. Кого убрали из проекта, того снимают с его задач в этом проекте (это видно в истории), а его уведомления по этому проекту удаляются, и новые не приходят.
 
 ```json
 {
@@ -345,7 +345,7 @@
 | --- | --- | --- | --- |
 | POST | `client-requests/` | все | `{name, company, email, phone, title, description, project_type, budget}`. Не больше 10 в час с одного адреса |
 | GET | `client-requests/` | Admin | `?status=`, `?search=` |
-| GET, PATCH | `client-requests/{id}/` | Admin | Поменять `status`: `New` → `Reviewing` → `Accepted` или `Rejected`. В ответе `project: {id, name}` или `null` |
+| GET, PATCH | `client-requests/{id}/` | Admin | Поменять `status`: `New` → `Reviewing` → `Accepted` или `Rejected`. В ответе `project: {id, name}` или `null`. Заявку, по которой создан проект, отклонить нельзя → `400` |
 | POST | `client-requests/{id}/project/` | Admin | Создать проект из заявки, тело не нужно. Название берётся из `title`, описание из `description`, категория из `project_type`. Заявка станет `Accepted`. Ответ `201` - проект, как в `GET projects/{id}/`. Второй раз или по заявке `Rejected` → `400` |
 
 Команду, участников и картинку созданному проекту ставят обычным `PATCH projects/{id}/`.
@@ -354,7 +354,7 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании - только по принятым заявкам |
+| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании - только по принятым заявкам. Цифры обновляются раз в минуту |
 | GET | `choices/` | все | Все варианты выбора: `[{value, label}]` |
 | GET | `health/` | все | `{"status": "ok"}` или `503`, если база недоступна. Для проверки сервера |
 

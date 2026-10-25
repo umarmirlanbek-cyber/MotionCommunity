@@ -138,6 +138,8 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+PRIVATE_MEDIA_ROOT = BASE_DIR / 'private_media'
+TASK_FILES_X_ACCEL = os.getenv('TASK_FILES_X_ACCEL', 'False').lower() in ('true', '1', 'yes')
 
 
 # Email

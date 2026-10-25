@@ -39,7 +39,7 @@ jobs:
           cache: pip
           cache-dependency-path: my_site/req.txt
       - run: pip install -r req.txt
-      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py makemigrations --check
       - run: python manage.py test
 
   docker:
@@ -65,7 +65,26 @@ jobs:
         run: |
           curl -fsS http://localhost/api/ru/health/
           curl -fsS -o /dev/null http://localhost/api/ru/choices/
+          docker compose exec -T web sh -c 'mkdir -p media/task_files media/team_image && echo x > media/task_files/x.png && echo x > media/team_image/x.png'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/task_files/x.png)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/team_image/x.png)" = 200
           for i in $(seq 1 20); do curl -s -o /dev/null -w '%{http_code}\n' http://localhost/admin/login/; done | grep -q 429
+      - name: Check a task file goes through nginx only by a signed link
+        run: |
+          URL=$(docker compose exec -T web python manage.py shell -v 0 -c "
+          from django.core.files.base import ContentFile
+          from motion_app.models import Project, Task, TaskAttachment
+          from motion_app.services import task_file_url
+          task = Task.objects.create(project=Project.objects.create(name='CI', description='d', category='c'), title='CI')
+          attachment = TaskAttachment(task=task)
+          attachment.file.save('ci.txt', ContentFile(b'ci-file'))
+          print(task_file_url(attachment))
+          print(attachment.file.name)" | tail -2)
+          LINK=$(echo "$URL" | head -1)
+          NAME=$(echo "$URL" | tail -1)
+          test "$(curl -fsS http://localhost$LINK)" = ci-file
+          curl -fsS -D - -o /dev/null http://localhost$LINK | grep -qi 'content-disposition: attachment'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/private/$NAME)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/$NAME)" = 404
       - if: failure()
         run: docker compose logs
