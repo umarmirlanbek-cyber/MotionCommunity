@@ -28,7 +28,7 @@ from .models import (
     TaskHistory, Notification, ClientRequest, PrivateStorage,
 )
 from .permission import project_role
-from .services import task_file_signer, task_file_url
+from .services import task_file_signer, task_file_url, LAST_ADMIN_ERROR
 from .swagger import TAG_NAMES
 
 
@@ -314,11 +314,13 @@ class UsersAdminTests(MotionTestCase):
     def test_last_admin_is_protected_in_django_admin(self):
         self.client.force_login(self.admin)
         delete_url = f'/admin/motion_app/userprofile/{self.admin.id}/delete/'
-        self.assertEqual(self.client.post(delete_url, {'post': 'yes'}).status_code, status.HTTP_403_FORBIDDEN)
+        response = self.client.post(delete_url, {'post': 'yes'}, follow=True)
+        self.assertRedirects(response, f'/admin/motion_app/userprofile/{self.admin.id}/change/')
+        self.assertContains(response, LAST_ADMIN_ERROR)
         response = self.client.post('/admin/motion_app/userprofile/', {
             'action': 'delete_selected', '_selected_action': [self.admin.id, self.member.id], 'post': 'yes',
-        })
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        }, follow=True)
+        self.assertContains(response, LAST_ADMIN_ERROR)
         self.assertEqual(UserProfile.objects.count(), 2)
 
         request = RequestFactory().post('/admin/')
