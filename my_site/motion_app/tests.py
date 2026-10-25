@@ -2,13 +2,13 @@ import os
 import tempfile
 from types import SimpleNamespace
 from unittest import mock
-from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.admin import site
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import connection
+from django.forms.models import model_to_dict
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signing import TimestampSigner
@@ -22,7 +22,7 @@ from .choices import (
     RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
     NotificationTypeChoices,
 )
-from .admin import TaskAdmin, TaskAttachmentInline
+from .admin import TaskAdmin, TaskAttachmentInline, UserProfileAdmin
 from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
     TaskHistory, Notification, ClientRequest, PrivateStorage,
@@ -310,6 +310,30 @@ class UsersAdminTests(MotionTestCase):
         self.assertEqual(self.client.patch(url, {'first_name': 'Админ'}).status_code, status.HTTP_200_OK)
         make_user('admin2', role=RoleChoices.ADMIN)
         self.assertEqual(self.client.patch(url, {'role': RoleChoices.MEMBER}).status_code, status.HTTP_200_OK)
+
+    def test_last_admin_is_protected_in_django_admin(self):
+        self.client.force_login(self.admin)
+        delete_url = f'/admin/motion_app/userprofile/{self.admin.id}/delete/'
+        self.assertEqual(self.client.post(delete_url, {'post': 'yes'}).status_code, status.HTTP_403_FORBIDDEN)
+        response = self.client.post('/admin/motion_app/userprofile/', {
+            'action': 'delete_selected', '_selected_action': [self.admin.id, self.member.id], 'post': 'yes',
+        })
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(UserProfile.objects.count(), 2)
+
+        request = RequestFactory().post('/admin/')
+        request.user = self.admin
+        form_class = UserProfileAdmin(UserProfile, site).get_form(request, self.admin)
+        def form(**change):
+            admin = UserProfile.objects.get(pk=self.admin.pk)
+            return form_class(data={**model_to_dict(admin), **change}, instance=admin)
+
+        self.assertFalse(form(role=RoleChoices.MEMBER).is_valid())
+        self.assertFalse(form(is_active=False).is_valid())
+        make_user('admin2', role=RoleChoices.ADMIN)
+        demoted = form(role=RoleChoices.MEMBER)
+        self.assertTrue(demoted.is_valid(), demoted.errors)
+        self.assertEqual(self.client.post(delete_url, {'post': 'yes'}).status_code, status.HTTP_302_FOUND)
 
     def test_admin_delete_revokes_refresh_tokens(self):
         refresh = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'Pass12345!word'}).data['refresh']
@@ -910,12 +934,15 @@ class TaskAttachmentTests(ProjectTestCase):
         self.assertIn('attachment', served['Content-Disposition'])
 
     def test_old_file_with_cyrillic_name_goes_through_nginx(self):
-        name = PrivateStorage().save('task_files/Отчёт за май.pdf', ContentFile(b'data'))
+        name = PrivateStorage().save('task_files/Отчёт_за_май.pdf', ContentFile(b'data'))
         attachment = TaskAttachment.objects.create(task=self.task, author=self.member, file=name)
         with self.settings(TASK_FILES_X_ACCEL=True):
             served = self.client.get(task_file_url(attachment))
         self.assertEqual(served.status_code, status.HTTP_200_OK)
-        self.assertEqual(served['X-Accel-Redirect'], f'/private/{quote(name)}')
+        self.assertEqual(name, 'task_files/Отчёт_за_май.pdf')
+        self.assertEqual(
+            served['X-Accel-Redirect'], '/private/task_files/%D0%9E%D1%82%D1%87%D1%91%D1%82_%D0%B7%D0%B0_%D0%BC%D0%B0%D0%B9.pdf'
+        )
         self.assertIn('filename*=utf-8', served['Content-Disposition'])
 
     def test_author_deletes_own_file(self):
@@ -1160,6 +1187,15 @@ class ChoicesTests(MotionTestCase):
         response = self.client.get('/api/ru/choices/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn({'value': 'UI_UX_Designer', 'label': 'UI/UX Designer'}, response.data['positions'])
+
+
+class NotFoundTests(MotionTestCase):
+    def test_api_not_found_is_json(self):
+        response = self.client.get('/api/ru/projects/abc/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.json(), {'detail': 'Страница не найдена.'})
+        self.assertEqual(self.client.get('/api/en/nothing/').json(), {'detail': 'Not found.'})
+        self.assertNotIn('json', self.client.get('/nothing/')['Content-Type'])
 
 
 class HealthTests(MotionTestCase):

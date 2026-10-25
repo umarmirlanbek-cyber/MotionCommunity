@@ -133,6 +133,21 @@ docker compose up -d --build
 
 `seed_data` на сервере не запустится: он стирает базу и работает только при `DEBUG=True`.
 
+### Обновление сервера
+
+1. Сделать копию тома с файлами: миграция `0017` переносит файлы задач из `media` в `private_media`.
+   Имя тома видно в `docker volume ls`, обычно `my_site_media_volume`:
+
+   ```bash
+   docker run --rm -v my_site_media_volume:/data -v $HOME:/backup alpine tar czf /backup/motion-media.tgz -C /data .
+   ```
+
+2. Обновить: `git pull && docker compose up -d --build`. Миграции `web` применит сам.
+3. Проверить файлы задач: `docker compose exec web ls private_media/task_files | head` показывает файлы,
+   а в `media/task_files` их больше нет.
+4. Открыть в API карточку задачи со старым вложением (лучше с кириллицей в имени) и скачать файл по ссылке
+   из `attachments[].file`: должен прийти файл с правильным именем.
+
 ## Переезд сервера с SQLite на Postgres
 
 В старой версии база - файл `db.sqlite3` в папке репозитория. Новый код работает только с Postgres, данные переносятся один раз.

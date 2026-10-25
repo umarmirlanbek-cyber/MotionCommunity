@@ -21,3 +21,5 @@ urlpatterns = [
     re_path(r"^api/docs(?P<format>\.json|\.yaml)$", schema_view.without_ui(cache_timeout=0), name="schema-json"),
     path("api/<str:lang>/", include("motion_app.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+handler404 = 'motion_app.views.api_not_found'

@@ -6,10 +6,11 @@ from django.core.signing import BadSignature, SignatureExpired
 from django.conf import settings
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import CharField, Count, F, Func, Prefetch
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import translation
 from django.utils.http import content_disposition_header
+from django.views.defaults import page_not_found
 from urllib.parse import quote
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
@@ -630,6 +631,12 @@ class ChoicesView(APIView):
             'working_formats': choices_to_list(WorkingFormatChoices),
             'language_levels': choices_to_list(LanguageLevelChoices),
         })
+
+
+def api_not_found(request, exception):
+    if request.path.startswith('/api/'):
+        return JsonResponse({'detail': str(NotFound.default_detail)}, status=status.HTTP_404_NOT_FOUND)
+    return page_not_found(request, exception)
 
 
 class HealthView(APIView):
