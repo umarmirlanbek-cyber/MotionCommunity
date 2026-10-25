@@ -2,6 +2,7 @@ venv
 .venv
 .env
 media
+private_media
 db.sqlite3
 staticfiles
 __pycache__

@@ -30,9 +30,11 @@ services:
       - .env
     environment:
       POSTGRES_HOST: db
+      TASK_FILES_X_ACCEL: "True"
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - private_media_volume:/app/private_media
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +51,7 @@ services:
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - private_media_volume:/app/private_media:ro
     depends_on:
       - web
     networks:
@@ -59,6 +62,7 @@ volumes:
   postgres_data:
   static_volume:
   media_volume:
+  private_media_volume:
 
 networks:
   motion_network:

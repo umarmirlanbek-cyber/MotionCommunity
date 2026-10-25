@@ -1,16 +1,20 @@
 import os
 import tempfile
+from types import SimpleNamespace
 from unittest import mock
 
+from django.conf import settings
 from django.contrib.admin import site
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.signing import TimestampSigner
 from django.test import RequestFactory, override_settings
 from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 
 from .choices import (
     RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
@@ -21,6 +25,8 @@ from .models import (
     UserProfile, WorkExperience, Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment,
     TaskHistory, Notification, ClientRequest,
 )
+from .permission import project_role
+from .services import task_file_signer
 from .swagger import TAG_NAMES
 
 
@@ -31,7 +37,8 @@ def make_user(username, role=RoleChoices.MEMBER, user_status=StatusChoices.ACTIV
 
 
 @override_settings(
-    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'], MEDIA_ROOT=tempfile.mkdtemp()
+    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'],
+    MEDIA_ROOT=tempfile.mkdtemp(), PRIVATE_MEDIA_ROOT=tempfile.mkdtemp(),
 )
 class MotionTestCase(APITestCase):
     def setUp(self):
@@ -90,6 +97,32 @@ class AuthTests(MotionTestCase):
         refresh = self.login()['refresh']
         self.user.delete()
         self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
+
+    def test_logout_blacklists_refresh_without_access(self):
+        refresh = self.login()['refresh']
+        response = self.client.post('/api/ru/auth/logout/', {'refresh': refresh})
+        self.assertEqual(response.status_code, status.HTTP_205_RESET_CONTENT)
+        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.post('/api/ru/auth/logout/', {'refresh': refresh}).status_code, 400)
+        self.assertEqual(self.client.post('/api/ru/auth/logout/', {'refresh': 'broken'}).status_code, 400)
+
+    def test_verify_returns_only_public_fields(self):
+        self.assertEqual(self.client.get('/api/ru/auth/verify/').status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.login()["access"]}')
+        response = self.client.get('/api/ru/auth/verify/')
+        self.assertEqual(response.data, {'id': self.user.id, 'username': 'dev1', 'role': RoleChoices.MEMBER})
+
+    def test_deactivated_user_is_locked_out(self):
+        tokens = self.login()
+        self.client.force_authenticate(make_user('admin', role=RoleChoices.ADMIN))
+        self.client.patch(f'/api/ru/users/{self.user.id}/', {'is_active': False})
+        self.assertTrue(BlacklistedToken.objects.filter(token__token=tokens['refresh']).exists())
+        self.assertEqual(self.refresh_status(tokens['refresh']), status.HTTP_401_UNAUTHORIZED)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {tokens["access"]}')
+        self.assertEqual(self.client.get('/api/ru/me/').status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.credentials()
+        response = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'Pass12345!word'})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_is_limited(self):
         for _ in range(10):
@@ -171,6 +204,13 @@ class MeTests(MotionTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password('NewPass12345!'))
+
+    def test_delete_me_revokes_refresh_tokens(self):
+        self.client.force_authenticate(None)
+        login = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'Pass12345!word'})
+        self.client.force_authenticate(self.user)
+        self.assertEqual(self.client.delete('/api/ru/me/').status_code, status.HTTP_204_NO_CONTENT)
+        self.assertTrue(BlacklistedToken.objects.filter(token__token=login.data['refresh']).exists())
 
     def test_delete_me_when_in_team(self):
         TeamMember.objects.create(team=Team.objects.create(name='Alpha'), user=self.user)
@@ -257,6 +297,17 @@ class UsersAdminTests(MotionTestCase):
     def test_member_cannot_use_users_api(self):
         self.client.force_authenticate(self.member)
         self.assertEqual(self.client.get('/api/ru/users/').status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_last_admin_cannot_be_removed_or_demoted(self):
+        self.client.force_authenticate(self.admin)
+        url = f'/api/ru/users/{self.admin.id}/'
+        self.assertEqual(self.client.delete('/api/ru/me/').status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.client.patch(url, {'role': RoleChoices.MEMBER}).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.client.patch(url, {'is_active': False}).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.client.patch(url, {'first_name': 'Админ'}).status_code, status.HTTP_200_OK)
+        make_user('admin2', role=RoleChoices.ADMIN)
+        self.assertEqual(self.client.patch(url, {'role': RoleChoices.MEMBER}).status_code, status.HTTP_200_OK)
 
     def test_admin_deletes_user_in_team(self):
         TeamMember.objects.create(team=Team.objects.create(name='Alpha'), user=self.member)
@@ -422,6 +473,13 @@ class ProjectTests(MotionTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'Completed')
 
+    def test_only_admin_moves_project_to_another_team(self):
+        other = Team.objects.create(name='Beta')
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.patch(self.url, {'team_id': other.id}).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch(self.url, {'team_id': other.id}).data['team']['id'], other.id)
+
     def test_member_and_foreign_lead_cannot_edit(self):
         other = Project.objects.create(name='Shop', description='d', category='Web')
         ProjectMember.objects.create(project=other, user=self.member, role=MemberRoleChoices.TEAM_LEAD)
@@ -454,6 +512,25 @@ class ProjectMemberTests(ProjectTestCase):
         self.client.force_authenticate(self.outsider)
         response = self.client.post(self.url, {'user_id': self.outsider.id})
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_role_and_removal_rules(self):
+        lead_url = f'{self.url}{self.lead.id}/'
+        self.client.force_authenticate(self.lead)
+        response = self.client.patch(f'{self.url}{self.member.id}/', {'role': MemberRoleChoices.TEAM_LEAD})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.delete(lead_url).status_code, status.HTTP_403_FORBIDDEN)
+        for user in (self.member, self.outsider):
+            self.client.force_authenticate(user)
+            self.assertEqual(self.client.delete(f'{self.url}{self.other_member.id}/').status_code, 403)
+        self.client.force_authenticate(make_user('admin', role=RoleChoices.ADMIN))
+        self.assertEqual(self.client.delete(lead_url).status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_inactive_user_cannot_be_added(self):
+        self.outsider.is_active = False
+        self.outsider.save()
+        self.client.force_authenticate(self.lead)
+        response = self.client.post(self.url, {'user_id': self.outsider.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 # ---------- Задачи ----------
@@ -516,6 +593,49 @@ class TaskTests(ProjectTestCase):
         self.client.force_authenticate(self.outsider)
         response = self.client.get(f'/api/ru/projects/{other.id}/tasks/{self.task.id}/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_writes_through_another_project_or_task_are_not_found(self):
+        other = Project.objects.create(name='Shop', description='d', category='Web')
+        ProjectMember.objects.create(project=other, user=self.outsider, role=MemberRoleChoices.TEAM_LEAD)
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='x')
+        foreign = f'/api/ru/projects/{other.id}/tasks/{self.task.id}/'
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.patch(foreign, {'title': 'X'}).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.delete(foreign).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.post(f'{foreign}comments/', {'text': 'X'}).status_code, 404)
+        self.assertEqual(self.client.delete(f'{foreign}comments/{comment.id}/').status_code, 404)
+        sibling = Task.objects.create(project=self.project, title='Y')
+        self.client.force_authenticate(self.member)
+        response = self.client.patch(f'{self.url}{sibling.id}/comments/{comment.id}/', {'text': 'X'})
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.task.refresh_from_db()
+        comment.refresh_from_db()
+        self.assertEqual((self.task.title, comment.text), ('API уроков', 'x'))
+
+    def test_task_update_locks_the_row(self):
+        self.client.force_authenticate(self.member)
+        with CaptureQueriesContext(connection) as queries:
+            self.client.patch(f'{self.url}{self.task.id}/', {'status': TaskStatusChoices.REVIEW})
+        self.assertTrue(any('FOR UPDATE OF "motion_app_task"' in query['sql'] for query in queries))
+
+    def test_author_and_admin_outside_project_edit_task(self):
+        task = Task.objects.create(project=self.project, title='X', author=self.other_member)
+        task_url = f'{self.url}{task.id}/'
+        self.client.force_authenticate(self.other_member)
+        self.assertEqual(self.client.patch(task_url, {'title': 'Y'}).status_code, status.HTTP_200_OK)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch(task_url, {'title': 'Z'}).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.delete(task_url).status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_anonymous_cannot_write(self):
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='x')
+        task_url = f'{self.url}{self.task.id}/'
+        for method, url in (
+            ('post', self.url), ('patch', task_url), ('delete', task_url),
+            ('post', f'{task_url}comments/'), ('patch', f'{task_url}comments/{comment.id}/'),
+            ('delete', f'{task_url}comments/{comment.id}/'), ('post', f'{task_url}attachments/'),
+        ):
+            self.assertEqual(getattr(self.client, method)(url).status_code, 401, (method, url))
 
     def test_filter_by_status(self):
         Task.objects.create(project=self.project, title='CI', status=TaskStatusChoices.DONE)
@@ -696,6 +816,11 @@ class TaskCommentTests(ProjectTestCase):
         self.client.force_authenticate(self.member)
         self.assertEqual(self.client.patch(f'{self.url}{comment.id}/', {'text': 'Готово'}).status_code, status.HTTP_200_OK)
 
+    def test_lead_cannot_edit_someone_elses_comment(self):
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='Начал')
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.patch(f'{self.url}{comment.id}/', {'text': 'X'}).status_code, 403)
+
     def test_lead_deletes_someone_elses_comment(self):
         comment = TaskComment.objects.create(task=self.task, author=self.member, text='Начал')
         self.client.force_authenticate(self.other_member)
@@ -753,6 +878,32 @@ class TaskAttachmentTests(ProjectTestCase):
         self.assertEqual(self.upload('page.html').status_code, status.HTTP_400_BAD_REQUEST)
         self.client.force_authenticate(self.outsider)
         self.assertEqual(self.upload().status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_bad_links_are_not_found(self):
+        self.client.force_authenticate(self.member)
+        response = self.upload()
+        TaskAttachment.objects.filter(pk=response.data['id']).delete()
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
+        for token in (TimestampSigner().sign('1'), task_file_signer.sign('abc')):
+            self.assertEqual(self.client.get(f'/api/ru/task-files/{token}/').status_code, 404)
+
+    def test_files_are_private_and_served_by_nginx(self):
+        self.client.force_authenticate(self.member)
+        response = self.upload()
+        attachment = TaskAttachment.objects.get(pk=response.data['id'])
+        self.assertTrue(attachment.file.path.startswith(str(settings.PRIVATE_MEDIA_ROOT)))
+        self.client.force_authenticate(None)
+        with self.settings(TASK_FILES_X_ACCEL=True):
+            served = self.client.get(response.data['file'])
+        self.assertEqual(served['X-Accel-Redirect'], f'/private/{attachment.file.name}')
+        self.assertEqual(served['Content-Type'], 'image/png')
+        self.assertIn('attachment', served['Content-Disposition'])
+
+    def test_author_deletes_own_file(self):
+        self.client.force_authenticate(self.member)
+        attachment_id = self.upload().data['id']
+        self.assertEqual(self.client.delete(f'{self.url}{attachment_id}/').status_code, 204)
 
     def test_delete_removes_file(self):
         self.client.force_authenticate(self.member)
@@ -819,6 +970,31 @@ class NotificationTests(ProjectTestCase):
         self.assertEqual(self.received(self.member), [])
         self.client.force_authenticate(self.member)
         self.assertEqual(self.client.get('/api/ru/me/tasks/').data['count'], 0)
+
+    def test_notifications_of_a_left_project_go_away(self):
+        task = Task.objects.create(project=self.project, title='API', assignee=self.member)
+        Notification.objects.create(user=self.member, actor=self.lead, task=task, type=NotificationTypeChoices.ASSIGNED)
+        old_project = Project.objects.create(name='Shop', description='d', category='Web')
+        old_task = Task.objects.create(project=old_project, title='Old')
+        Notification.objects.create(user=self.member, task=old_task, type=NotificationTypeChoices.COMMENT)
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.get('/api/ru/me/notifications/').data['count'], 1)
+        self.assertEqual(self.client.post('/api/ru/me/notifications/read-all/').data, {'updated': 1})
+
+        self.client.force_authenticate(self.lead)
+        self.client.delete(f'/api/ru/projects/{self.project.id}/members/{self.member.id}/')
+        self.assertFalse(Notification.objects.filter(user=self.member, task__project=self.project).exists())
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.get('/api/ru/me/notifications/').data['count'], 0)
+
+    def test_inactive_users_are_not_notified(self):
+        self.other_member.is_active = False
+        self.other_member.save()
+        task = Task.objects.create(project=self.project, title='API', assignee=self.other_member, author=self.lead)
+        self.client.force_authenticate(self.member)
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': '@dev2 глянь'})
+        self.assertEqual(self.received(self.other_member), [])
+        self.assertEqual(self.received(self.lead), [NotificationTypeChoices.COMMENT])
 
     def test_my_notifications(self):
         task = Task.objects.create(project=self.project, title='API')
@@ -907,6 +1083,13 @@ class ClientRequestTests(MotionTestCase):
         self.assertEqual(request.status, ClientStatusChoices.REJECTED)
         self.assertFalse(Project.objects.exists())
 
+    def test_request_with_project_cannot_be_rejected(self):
+        request = ClientRequest.objects.create(**REQUEST_DATA)
+        self.client.force_authenticate(self.admin)
+        self.client.post(f'/api/ru/client-requests/{request.id}/project/')
+        response = self.client.patch(f'/api/ru/client-requests/{request.id}/', {'status': ClientStatusChoices.REJECTED})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_requests_are_limited(self):
         for _ in range(10):
             self.client.post('/api/ru/client-requests/', REQUEST_DATA)
@@ -932,6 +1115,26 @@ class StatsTests(MotionTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['members_count'], 1)
         self.assertEqual(response.data['companies_count'], 1)
+
+
+class StatsCacheTests(MotionTestCase):
+    def test_stats_are_cached_for_a_minute(self):
+        first = self.client.get('/api/ru/stats/').data
+        make_user('dev9')
+        self.assertEqual(self.client.get('/api/ru/stats/').data, first)
+
+
+class ProjectRoleTests(MotionTestCase):
+    def test_role_is_cached_per_project_and_needs_explicit_kwarg(self):
+        user = make_user('lead1')
+        first = Project.objects.create(name='A', description='d', category='Web')
+        second = Project.objects.create(name='B', description='d', category='Web')
+        ProjectMember.objects.create(project=first, user=user, role=MemberRoleChoices.TEAM_LEAD)
+        request = SimpleNamespace(user=user)
+        self.assertEqual(project_role(request, SimpleNamespace(kwargs={'project_id': first.id})), 'Team_Lead')
+        self.assertIsNone(project_role(request, SimpleNamespace(kwargs={'project_id': second.id})))
+        with self.assertRaises(KeyError):
+            project_role(request, SimpleNamespace(kwargs={'pk': first.id}))
 
 
 class ChoicesTests(MotionTestCase):

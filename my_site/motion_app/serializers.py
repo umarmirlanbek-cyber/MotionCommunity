@@ -2,13 +2,13 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
-from .choices import StatusChoices
+from .choices import RoleChoices, StatusChoices, ClientStatusChoices
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate, validate_label,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, Notification,
     ClientRequest,
 )
-from .services import task_file_url
+from .services import check_not_last_admin, task_file_url
 
 
 # ---------- Вход и выход ----------
@@ -194,6 +194,12 @@ class UserDetailSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('status',)
 
+    def validate(self, attrs):
+        demoted = attrs.get('role', self.instance.role) != RoleChoices.ADMIN
+        if demoted or not attrs.get('is_active', self.instance.is_active):
+            check_not_last_admin(self.instance)
+        return attrs
+
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
         if password:
@@ -205,7 +211,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
 class GroupMemberSerializer(serializers.ModelSerializer):
     user = MemberShortSerializer(read_only=True)
-    user_id = serializers.PrimaryKeyRelatedField(source='user', queryset=UserProfile.objects.all(), write_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(
+        source='user', queryset=UserProfile.objects.filter(is_active=True), write_only=True
+    )
 
     class Meta:
         fields = ('user', 'user_id', 'role')
@@ -355,7 +363,7 @@ class TaskDetailSerializer(serializers.ModelSerializer):
         project_id = self.context['view'].kwargs['project_id']
         if self.instance and user and user.pk == self.instance.assignee_id:
             return user
-        if user and not ProjectMember.objects.filter(project_id=project_id, user=user).exists():
+        if user and not ProjectMember.objects.select_for_update().filter(project_id=project_id, user=user).exists():
             raise serializers.ValidationError('Исполнитель должен состоять в проекте')
         return user
 
@@ -423,3 +431,8 @@ class ClientRequestDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'company', 'email', 'phone', 'title', 'description',
             'project_type', 'budget', 'status', 'project', 'created_at',
         )
+
+    def validate_status(self, value):
+        if value == ClientStatusChoices.REJECTED and self.instance and self.instance.project_id:
+            raise serializers.ValidationError('По этой заявке уже создан проект')
+        return value

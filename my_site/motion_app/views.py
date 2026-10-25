@@ -1,12 +1,15 @@
+import mimetypes
 from copy import copy
 
+from django.core.cache import cache
 from django.core.signing import BadSignature, SignatureExpired
 from django.conf import settings
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import CharField, Count, F, Func, Prefetch
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import translation
+from django.utils.http import content_disposition_header
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, generics, mixins, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -34,7 +37,10 @@ from .permission import (
     is_admin, IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember,
     IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
 )
-from .services import task_created, task_changed, comment_created, member_removed, task_file_id
+from .services import (
+    task_created, task_changed, comment_created, member_removed, task_file_id, visible_notifications,
+    check_not_last_admin,
+)
 from .serializers import (
     LoginSerializer, RefreshSerializer, LogoutSerializer, ChangePasswordSerializer,
     MemberShortSerializer, MemberDetailSerializer, MeSerializer,
@@ -61,7 +67,8 @@ class RefreshView(TokenRefreshView):
 
 class LogoutView(generics.GenericAPIView):
     serializer_class = LogoutSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -114,6 +121,7 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
         serializer.instance = self.with_details()
 
     def perform_destroy(self, instance):
+        check_not_last_admin(instance)
         revoke_tokens(instance)
         instance.delete()
 
@@ -204,6 +212,10 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return UserCreateSerializer
         return UserDetailSerializer
+
+    def perform_destroy(self, instance):
+        check_not_last_admin(instance)
+        instance.delete()
 
 
 # ---------- Команды ----------
@@ -314,6 +326,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     http_method_names = ['get', 'post', 'patch', 'delete']
     lookup_value_regex = r'\d+'
+    project_lookup_kwarg = 'pk'
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -337,6 +350,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return queryset.prefetch_related(Prefetch('members', queryset=ProjectMember.objects.select_related('user')))
 
     def perform_update(self, serializer):
+        if 'team' in serializer.validated_data and not is_admin(self.request.user):
+            raise PermissionDenied('Менять команду проекта может только Admin')
         project = serializer.save()
         serializer.instance = self.with_details(self.queryset).get(pk=project.pk)
 
@@ -380,6 +395,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         queryset = Task.objects.filter(project_id=self.kwargs.get('project_id')).select_related('assignee')
         if self.action == 'retrieve':
             return self.with_details(queryset)
+        if self.action == 'partial_update':
+            return queryset.select_for_update(of=('self',))
         return queryset
 
     @staticmethod
@@ -397,7 +414,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         old = copy(serializer.instance)
         task = serializer.save()
         task_changed(old, task, self.request.user)
-        serializer.instance = self.with_details(self.get_queryset()).get(pk=task.pk)
+        serializer.instance = self.with_details(Task.objects.select_related('assignee')).get(pk=task.pk)
 
 
 class TaskLabelListAPIView(APIView):
@@ -470,11 +487,15 @@ class TaskFileView(APIView):
         except (BadSignature, ValueError):
             raise NotFound()
         attachment = get_object_or_404(TaskAttachment, pk=attachment_id)
-        try:
-            file = attachment.file.open('rb')
-        except FileNotFoundError:
+        if not attachment.file.storage.exists(attachment.file.name):
             raise NotFound()
-        return FileResponse(file, as_attachment=True, filename=attachment.name)
+        if settings.TASK_FILES_X_ACCEL:
+            content_type = mimetypes.guess_type(attachment.file.name)[0] or 'application/octet-stream'
+            response = HttpResponse(content_type=content_type)
+            response['X-Accel-Redirect'] = f'/private/{attachment.file.name}'
+            response['Content-Disposition'] = content_disposition_header(True, attachment.name)
+            return response
+        return FileResponse(attachment.file.open('rb'), as_attachment=True, filename=attachment.name)
 
 
 class MyTaskListAPIView(generics.ListAPIView):
@@ -504,14 +525,14 @@ class NotificationViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, viewse
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Notification.objects.none()
-        return Notification.objects.filter(user=self.request.user).select_related('actor', 'task__project', 'comment')
+        return visible_notifications(self.request.user).select_related('actor', 'task__project', 'comment')
 
 
 class NotificationReadAllView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        updated = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        updated = visible_notifications(request.user).filter(is_read=False).update(is_read=True)
         return Response({'updated': updated})
 
 
@@ -549,6 +570,7 @@ class ClientRequestDetailAPIView(generics.RetrieveUpdateAPIView):
 class ClientRequestProjectView(APIView):
     permission_classes = [IsAdmin]
 
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         client_request = get_object_or_404(ClientRequest.objects.select_for_update(), pk=kwargs['pk'])
         if client_request.project_id:
@@ -570,17 +592,24 @@ class ClientRequestProjectView(APIView):
 
 # ---------- Статистика и справочники ----------
 
+STATS_CACHE_SECONDS = 60
+
+
+def community_stats():
+    return {
+        'members_count': UserProfile.objects.public().count(),
+        'teams_count': Team.objects.count(),
+        'projects_count': Project.objects.count(),
+        'companies_count': ClientRequest.objects.filter(status=ClientStatusChoices.ACCEPTED)
+            .values('company').distinct().count(),
+    }
+
+
 class CommunityStatsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, *args, **kwargs):
-        return Response({
-            'members_count': UserProfile.objects.public().count(),
-            'teams_count': Team.objects.count(),
-            'projects_count': Project.objects.count(),
-            'companies_count': ClientRequest.objects.filter(status=ClientStatusChoices.ACCEPTED)
-                .values('company').distinct().count(),
-        })
+        return Response(cache.get_or_set('community_stats', community_stats, STATS_CACHE_SECONDS))
 
 
 def choices_to_list(choices):

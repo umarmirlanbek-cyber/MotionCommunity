@@ -7,24 +7,18 @@ def is_admin(user):
     return user.role == RoleChoices.ADMIN
 
 
-class IsAdmin(BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user and
-            request.user.is_authenticated and
-            is_admin(request.user)
-        )
-
-
 def project_role(request, view):
-    if not hasattr(request, 'project_role'):
-        request.project_role = ProjectMember.objects.filter(
-            project_id=view.kwargs.get('project_id') or view.kwargs.get('pk'), user=request.user
+    project_id = view.kwargs[getattr(view, 'project_lookup_kwarg', 'project_id')]
+    if not hasattr(request, 'project_roles'):
+        request.project_roles = {}
+    if project_id not in request.project_roles:
+        request.project_roles[project_id] = ProjectMember.objects.filter(
+            project_id=project_id, user=request.user
         ).values_list('role', flat=True).first()
-    return request.project_role
+    return request.project_roles[project_id]
 
 
-class IsAdminOr(BasePermission):
+class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and (is_admin(user) or self.allows(request, view)))
@@ -33,19 +27,19 @@ class IsAdminOr(BasePermission):
         return False
 
 
-class IsAdminOrTeamLead(IsAdminOr):
+class IsAdminOrTeamLead(IsAdmin):
     def allows(self, request, view):
         return TeamMember.objects.filter(
             team_id=view.kwargs.get('team_id'), user=request.user, role=MemberRoleChoices.TEAM_LEAD
         ).exists()
 
 
-class IsAdminOrProjectTeamLead(IsAdminOr):
+class IsAdminOrProjectTeamLead(IsAdmin):
     def allows(self, request, view):
         return project_role(request, view) == MemberRoleChoices.TEAM_LEAD
 
 
-class IsAdminOrProjectMember(IsAdminOr):
+class IsAdminOrProjectMember(IsAdmin):
     def allows(self, request, view):
         return project_role(request, view) is not None
 

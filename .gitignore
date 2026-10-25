@@ -6,4 +6,5 @@ __pycache__/
 *.pyc
 staticfiles/
 media/
+private_media/
 db.sqlite3
