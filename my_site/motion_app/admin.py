@@ -4,6 +4,7 @@ from django.contrib.admin.actions import delete_selected
 from django.contrib.admin.utils import unquote
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm
+from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.html import format_html
@@ -49,10 +50,11 @@ class UserProfileChangeForm(UserChangeForm):
 
 
 def delete_selected_users(modeladmin, request, queryset):
-    if leaves_no_admin(list(queryset)):
-        modeladmin.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
-        return None
-    return delete_selected(modeladmin, request, queryset)
+    with transaction.atomic():
+        if leaves_no_admin(list(queryset), lock=True):
+            modeladmin.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
+            return None
+        return delete_selected(modeladmin, request, queryset)
 
 
 @admin.register(UserProfile)
@@ -78,11 +80,12 @@ class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
         return actions
 
     def delete_view(self, request, object_id, extra_context=None):
-        user = self.get_object(request, unquote(object_id))
-        if user and leaves_no_admin([user]):
-            self.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
-            return HttpResponseRedirect(reverse('admin:motion_app_userprofile_change', args=[user.pk]))
-        return super().delete_view(request, object_id, extra_context)
+        with transaction.atomic():
+            user = self.get_object(request, unquote(object_id))
+            if user and leaves_no_admin([user], lock=True):
+                self.message_user(request, LAST_ADMIN_ERROR, messages.ERROR)
+                return HttpResponseRedirect(reverse('admin:motion_app_userprofile_change', args=[user.pk]))
+            return super().delete_view(request, object_id, extra_context)
 
 
 class TeamMemberInline(admin.TabularInline):

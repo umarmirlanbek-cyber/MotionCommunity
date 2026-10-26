@@ -10,7 +10,6 @@ from django.contrib.postgres.indexes import GinIndex
 from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.core.validators import FileExtensionValidator, RegexValidator
-from django.db.models.signals import post_delete, pre_save
 from django.utils import timezone
 from django.utils.deconstruct import deconstructible
 from phonenumber_field.modelfields import PhoneNumberField
@@ -25,7 +24,7 @@ from .choices import (
 MAX_FILE_SIZE_MB = 5
 MAX_LABELS = 10
 MAX_LABEL_LENGTH = 50
-ASSIGNEE_NOT_MEMBER = 'Исполнитель должен состоять в проекте'
+ASSIGNEE_NOT_MEMBER = 'Исполнитель должен быть активным участником проекта'
 ATTACHMENT_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'zip']
 
 
@@ -279,7 +278,8 @@ class Task(models.Model):
         return self.title
 
     def clean(self):
-        current = Task.objects.filter(pk=self.pk).values_list('assignee_id', flat=True).first()
+        same_project = Task.objects.filter(pk=self.pk, project_id=self.project_id)
+        current = same_project.values_list('assignee_id', flat=True).first()
         if not can_be_assignee(self.project_id, self.assignee_id, current):
             raise ValidationError({'assignee': ASSIGNEE_NOT_MEMBER})
 
@@ -288,7 +288,7 @@ def can_be_assignee(project_id, user_id, current_assignee_id=None, lock=False):
     if not user_id or user_id == current_assignee_id:
         return True
     members = ProjectMember.objects.select_for_update() if lock else ProjectMember.objects
-    return members.filter(project_id=project_id, user_id=user_id).exists()
+    return members.filter(project_id=project_id, user_id=user_id, user__is_active=True).exists()
 
 
 class TaskComment(models.Model):
@@ -412,6 +412,3 @@ def delete_files(sender, instance, **kwargs):
         file = getattr(instance, field)
         delete_file_on_commit(file.storage, file.name)
 
-
-pre_save.connect(delete_replaced_files)
-post_delete.connect(delete_files)

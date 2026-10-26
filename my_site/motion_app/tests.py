@@ -19,7 +19,7 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 
 from .choices import (
-    RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
+    PositionChoices, RoleChoices, StatusChoices, MemberRoleChoices, ClientStatusChoices, TaskStatusChoices, TaskTypeChoices,
     NotificationTypeChoices,
 )
 from .admin import TaskAdmin, TaskAttachmentInline, UserProfileAdmin
@@ -199,6 +199,16 @@ class MeTests(MotionTestCase):
         join(5)
         self.assertEqual(count(), before)
 
+    def test_profile_patch_does_not_undo_admin_changes(self):
+        UserProfile.objects.filter(pk=self.user.pk).update(position=PositionChoices.QA_ENGINEER)
+        response = self.client.patch('/api/en/me/', {'first_name': 'Азамат', 'bio': 'Backend developer'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(
+            (self.user.position, self.user.first_name, self.user.bio_en, self.user.status),
+            (PositionChoices.QA_ENGINEER, 'Азамат', 'Backend developer', StatusChoices.ACTIVE),
+        )
+
     def test_change_password_needs_old_password(self):
         response = self.client.post('/api/ru/me/password/', {'old_password': 'wrong', 'new_password': 'NewPass12345!'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -314,7 +324,9 @@ class UsersAdminTests(MotionTestCase):
     def test_last_admin_is_protected_in_django_admin(self):
         self.client.force_login(self.admin)
         delete_url = f'/admin/motion_app/userprofile/{self.admin.id}/delete/'
-        response = self.client.post(delete_url, {'post': 'yes'}, follow=True)
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post(delete_url, {'post': 'yes'}, follow=True)
+        self.assertTrue(any('FOR UPDATE' in query['sql'] for query in queries))
         self.assertRedirects(response, f'/admin/motion_app/userprofile/{self.admin.id}/change/')
         self.assertContains(response, LAST_ADMIN_ERROR)
         response = self.client.post('/admin/motion_app/userprofile/', {
@@ -506,6 +518,13 @@ class ProjectTests(MotionTestCase):
         response = self.client.patch(self.url, {'status': 'Completed'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'Completed')
+
+    def test_other_methods_on_project_list_are_refused(self):
+        self.client.force_authenticate(self.member)
+        for method in ('options', 'put', 'patch', 'delete'):
+            self.assertEqual(getattr(self.client, method)('/api/ru/projects/').status_code, 403, method)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch('/api/ru/projects/').status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def test_only_admin_moves_project_to_another_team(self):
         other = Team.objects.create(name='Beta')
@@ -798,6 +817,32 @@ class TaskTests(ProjectTestCase):
             Task(project=self.project, title='X', author=self.lead, labels=[f'l{i}' for i in range(11)]).full_clean()
         self.assertEqual(list(error.exception.message_dict), ['labels'])
 
+    def test_moving_task_to_another_project_checks_assignee(self):
+        other = Project.objects.create(name='Shop', description='d', category='Web')
+        self.task.project = other
+        with self.assertRaises(ValidationError) as error:
+            self.task.full_clean()
+        self.assertEqual(list(error.exception.message_dict), ['assignee'])
+
+    def test_inactive_user_cannot_be_assigned(self):
+        self.other_member.is_active = False
+        self.other_member.save()
+        self.client.force_authenticate(self.lead)
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': self.other_member.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.task.assignee = self.other_member
+        self.task.save()
+        response = self.client.patch(f'{self.url}{self.task.id}/', {'assignee_id': self.other_member.id, 'title': 'X'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_deleting_a_task_does_not_load_its_history(self):
+        TaskHistory.objects.create(task=self.task, user=self.lead, field='status')
+        Notification.objects.create(user=self.member, task=self.task, type=NotificationTypeChoices.ASSIGNED)
+        with CaptureQueriesContext(connection) as queries:
+            self.task.delete()
+        selects = [query['sql'] for query in queries if query['sql'].startswith('SELECT')]
+        self.assertFalse([sql for sql in selects if 'motion_app_taskhistory' in sql or 'motion_app_notification' in sql])
+
     def test_unchanged_assignee_can_be_sent_again(self):
         ProjectMember.objects.filter(user=self.member).delete()
         self.client.force_authenticate(self.lead)
@@ -947,6 +992,14 @@ class TaskAttachmentTests(ProjectTestCase):
         )
         self.assertIn('filename*=utf-8', served['Content-Disposition'])
 
+    def test_file_removed_between_checks_is_not_found(self):
+        self.client.force_authenticate(self.member)
+        response = self.upload()
+        os.remove(TaskAttachment.objects.get(pk=response.data['id']).file.path)
+        self.client.force_authenticate(None)
+        with mock.patch.object(PrivateStorage, 'exists', return_value=True):
+            self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
+
     def test_author_deletes_own_file(self):
         self.client.force_authenticate(self.member)
         attachment_id = self.upload().data['id']
@@ -1033,6 +1086,25 @@ class NotificationTests(ProjectTestCase):
         self.assertFalse(Notification.objects.filter(user=self.member, task__project=self.project).exists())
         self.client.force_authenticate(self.member)
         self.assertEqual(self.client.get('/api/ru/me/notifications/').data['count'], 0)
+
+    def test_member_removal_locks_the_tasks(self):
+        Task.objects.create(project=self.project, title='API', assignee=self.member)
+        self.client.force_authenticate(self.lead)
+        with CaptureQueriesContext(connection) as queries:
+            self.client.delete(f'/api/ru/projects/{self.project.id}/members/{self.member.id}/')
+        self.assertTrue(any('FOR UPDATE OF "motion_app_task"' in query['sql'] for query in queries))
+
+    def test_mentions_with_at_and_trailing_dot(self):
+        corp = make_user('anna@corp')
+        ProjectMember.objects.create(project=self.project, user=corp)
+        anna = make_user('anna')
+        ProjectMember.objects.create(project=self.project, user=anna)
+        task = Task.objects.create(project=self.project, title='API')
+        self.client.force_authenticate(self.member)
+        self.client.post(f'{self.url}{task.id}/comments/', {'text': '@anna@corp и @dev2. гляньте'})
+        self.assertEqual(self.received(corp), [NotificationTypeChoices.MENTION])
+        self.assertEqual(self.received(anna), [])
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.MENTION])
 
     def test_inactive_users_are_not_notified(self):
         self.other_member.is_active = False
@@ -1129,6 +1201,13 @@ class ClientRequestTests(MotionTestCase):
         request.refresh_from_db()
         self.assertEqual(request.status, ClientStatusChoices.REJECTED)
         self.assertFalse(Project.objects.exists())
+
+    def test_request_patch_locks_the_row(self):
+        request = ClientRequest.objects.create(**REQUEST_DATA)
+        self.client.force_authenticate(self.admin)
+        with CaptureQueriesContext(connection) as queries:
+            self.client.patch(f'/api/ru/client-requests/{request.id}/', {'status': ClientStatusChoices.REVIEWING})
+        self.assertTrue(any('FOR UPDATE OF "motion_app_clientrequest"' in query['sql'] for query in queries))
 
     def test_request_with_project_cannot_be_rejected(self):
         request = ClientRequest.objects.create(**REQUEST_DATA)

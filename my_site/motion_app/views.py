@@ -32,7 +32,6 @@ from .choices import (
 from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, ClientRequest,
-    revoke_tokens,
 )
 from .filters import TaskFilter, MyTaskFilter
 from .permission import (
@@ -40,8 +39,7 @@ from .permission import (
     IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
 )
 from .services import (
-    task_created, task_changed, comment_created, member_removed, task_file_id, visible_notifications,
-    check_not_last_admin,
+    task_created, task_changed, comment_created, member_removed, task_file_id, visible_notifications, delete_user,
 )
 from .serializers import (
     LoginSerializer, RefreshSerializer, LogoutSerializer, ChangePasswordSerializer,
@@ -122,9 +120,7 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
         serializer.instance = self.with_details()
 
     def perform_destroy(self, instance):
-        check_not_last_admin(instance)
-        revoke_tokens(instance)
-        instance.delete()
+        delete_user(instance)
 
 
 class ChangePasswordView(generics.GenericAPIView):
@@ -213,9 +209,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserDetailSerializer
 
     def perform_destroy(self, instance):
-        check_not_last_admin(instance)
-        revoke_tokens(instance)
-        instance.delete()
+        delete_user(instance)
 
 
 # ---------- Команды ----------
@@ -331,9 +325,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [AllowAny()]
-        if self.action in ('create', 'destroy'):
-            return [IsAdmin()]
-        return [IsAdminOrProjectTeamLead()]
+        if self.action == 'partial_update':
+            return [IsAdminOrProjectTeamLead()]
+        return [IsAdmin()]
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -496,7 +490,11 @@ class TaskFileView(APIView):
             response['X-Accel-Redirect'] = f'/private/{quote(attachment.file.name)}'
             response['Content-Disposition'] = content_disposition_header(True, attachment.name)
             return response
-        return FileResponse(attachment.file.open('rb'), as_attachment=True, filename=attachment.name)
+        try:
+            file = attachment.file.open('rb')
+        except FileNotFoundError:
+            raise NotFound()
+        return FileResponse(file, as_attachment=True, filename=attachment.name)
 
 
 class MyTaskListAPIView(generics.ListAPIView):
@@ -562,6 +560,11 @@ class ClientRequestDetailAPIView(generics.RetrieveUpdateAPIView):
     serializer_class = ClientRequestDetailSerializer
     permission_classes = [IsAdmin]
     http_method_names = ['get', 'patch']
+
+    def get_queryset(self):
+        if self.request.method == 'PATCH':
+            return self.queryset.select_for_update(of=('self',))
+        return self.queryset
 
 
 class ClientRequestProjectView(APIView):
