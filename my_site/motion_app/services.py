@@ -7,10 +7,10 @@ from django.utils.translation import get_language
 from rest_framework.exceptions import ValidationError
 
 from .choices import RoleChoices, NotificationTypeChoices
-from .models import UserProfile, ProjectMember, Task, TaskHistory, Notification
+from .models import UserProfile, ProjectMember, Task, TaskHistory, Notification, revoke_tokens
 
 TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
-MENTION_RE = re.compile(r'(?<!\w)@([\w.+-]+)')
+MENTION_RE = re.compile(r'(?<!\w)@([\w.@+-]+)')
 MAX_MENTIONS = 50
 TASK_FILE_LINK_MAX_AGE = 60 * 60
 task_file_signer = TimestampSigner(salt='task-file')
@@ -59,8 +59,12 @@ def task_changed(old, task, actor):
 
 def comment_created(comment):
     task = comment.task
-    names = list(dict.fromkeys(name.rstrip('.') for name in MENTION_RE.findall(comment.text)))[:MAX_MENTIONS]
-    mentioned = list(UserProfile.objects.filter(username__in=names, project_memberships__project_id=task.project_id))
+    names = list(dict.fromkeys(MENTION_RE.findall(comment.text)))[:MAX_MENTIONS]
+    members = UserProfile.objects.filter(
+        username__in={*names, *(name.rstrip('.') for name in names)}, project_memberships__project_id=task.project_id
+    )
+    by_username = {user.username: user for user in members}
+    mentioned = [user for name in names if (user := by_username.get(name) or by_username.get(name.rstrip('.')))]
     notify(mentioned, comment.author, task, NotificationTypeChoices.MENTION, comment)
     member_ids = set(ProjectMember.objects.filter(
         project_id=task.project_id, user_id__in=[task.assignee_id, task.author_id]
@@ -79,11 +83,14 @@ def visible_notifications(user_id):
 def member_removed(member, actor):
     Notification.objects.filter(user_id=member.user_id, task__project_id=member.project_id).delete()
     tasks = list(
-        Task.objects.filter(project_id=member.project_id, assignee_id=member.user_id).select_related('assignee')
+        Task.objects.filter(project_id=member.project_id, assignee_id=member.user_id)
+        .select_related('assignee').select_for_update(of=('self',))
     )
     if not tasks:
         return
-    Task.objects.filter(pk__in=[task.pk for task in tasks]).update(assignee=None, updated_at=timezone.now())
+    Task.objects.filter(pk__in=[task.pk for task in tasks], assignee_id=member.user_id).update(
+        assignee=None, updated_at=timezone.now()
+    )
     old_value = history_value(tasks[0], 'assignee')
     TaskHistory.objects.bulk_create([
         TaskHistory(task=task, user=actor, field='assignee', old_value=old_value, new_value='') for task in tasks
@@ -106,6 +113,12 @@ def leaves_no_admin(users, lock=False):
 def check_not_last_admin(user):
     if leaves_no_admin([user], lock=True):
         raise ValidationError({'detail': LAST_ADMIN_ERROR})
+
+
+def delete_user(user):
+    check_not_last_admin(user)
+    revoke_tokens(user)
+    user.delete()
 
 
 def task_file_url(attachment):

@@ -161,7 +161,7 @@ class MeSerializer(MemberDetailSerializer):
             setattr(instance, attr, value)
         if instance.status == StatusChoices.INACTIVE and (instance.first_name or instance.bio or instance.skills):
             instance.status = StatusChoices.ACTIVE
-        instance.save()
+        instance.save(update_fields=[*validated_data, 'status'])
         return instance
 
 
