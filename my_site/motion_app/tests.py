@@ -929,7 +929,7 @@ class TaskAttachmentTests(ProjectTestCase):
 
     def test_file_link_is_signed_and_expires(self):
         self.client.force_authenticate(self.member)
-        link = self.upload().data['file']
+        link = self.upload().data[0]['file']
         self.assertIn('/api/ru/task-files/', link)
         self.client.force_authenticate(None)
         response = self.client.get(link)
@@ -946,12 +946,32 @@ class TaskAttachmentTests(ProjectTestCase):
         self.client.force_authenticate(self.member)
         response = self.upload('а' * 150 + '.pdf')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        attachment = TaskAttachment.objects.get(pk=response.data['id'])
+        attachment = TaskAttachment.objects.get(pk=response.data[0]['id'])
         self.assertEqual(attachment.name, 'а' * 150 + '.pdf')
         self.assertIn('/api/ru/task-files/', TaskAttachmentInline(Task, site).download(attachment))
 
         os.remove(attachment.file.path)
-        self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.get(response.data[0]['file']).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_several_files_in_one_request(self):
+        self.client.force_authenticate(self.member)
+        files = [SimpleUploadedFile('a.png', b'a'), SimpleUploadedFile('b.jpg', b'b')]
+        response = self.client.post(self.url, {'file': files}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual([item['name'] for item in response.data], ['a.png', 'b.jpg'])
+        self.assertEqual([item['name'] for item in self.client.get(self.task_url).data['attachments']], ['a.png', 'b.jpg'])
+
+    def test_bad_or_too_many_files_save_nothing(self):
+        self.client.force_authenticate(self.member)
+        files = [SimpleUploadedFile('a.png', b'a'), SimpleUploadedFile('page.html', b'x')]
+        response = self.client.post(self.url, {'file': files}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(response.data['file'][0].startswith('page.html: '))
+        files = [SimpleUploadedFile(f'{i}.png', b'x') for i in range(11)]
+        response = self.client.post(self.url, {'file': files}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(TaskAttachment.objects.exists())
+        self.assertEqual(self.client.post(self.url, {}, format='multipart').status_code, 400)
 
     def test_wrong_type_and_outsider(self):
         self.client.force_authenticate(self.member)
@@ -962,20 +982,20 @@ class TaskAttachmentTests(ProjectTestCase):
     def test_bad_links_are_not_found(self):
         self.client.force_authenticate(self.member)
         response = self.upload()
-        TaskAttachment.objects.filter(pk=response.data['id']).delete()
+        TaskAttachment.objects.filter(pk=response.data[0]['id']).delete()
         self.client.force_authenticate(None)
-        self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.get(response.data[0]['file']).status_code, status.HTTP_404_NOT_FOUND)
         for token in (TimestampSigner().sign('1'), task_file_signer.sign('abc')):
             self.assertEqual(self.client.get(f'/api/ru/task-files/{token}/').status_code, 404)
 
     def test_files_are_private_and_served_by_nginx(self):
         self.client.force_authenticate(self.member)
         response = self.upload()
-        attachment = TaskAttachment.objects.get(pk=response.data['id'])
+        attachment = TaskAttachment.objects.get(pk=response.data[0]['id'])
         self.assertTrue(attachment.file.path.startswith(str(settings.PRIVATE_MEDIA_ROOT)))
         self.client.force_authenticate(None)
         with self.settings(TASK_FILES_X_ACCEL=True):
-            served = self.client.get(response.data['file'])
+            served = self.client.get(response.data[0]['file'])
         self.assertEqual(served['X-Accel-Redirect'], f'/private/{attachment.file.name}')
         self.assertEqual(served['Content-Type'], 'image/png')
         self.assertIn('attachment', served['Content-Disposition'])
@@ -995,19 +1015,19 @@ class TaskAttachmentTests(ProjectTestCase):
     def test_file_removed_between_checks_is_not_found(self):
         self.client.force_authenticate(self.member)
         response = self.upload()
-        os.remove(TaskAttachment.objects.get(pk=response.data['id']).file.path)
+        os.remove(TaskAttachment.objects.get(pk=response.data[0]['id']).file.path)
         self.client.force_authenticate(None)
         with mock.patch.object(PrivateStorage, 'exists', return_value=True):
-            self.assertEqual(self.client.get(response.data['file']).status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(self.client.get(response.data[0]['file']).status_code, status.HTTP_404_NOT_FOUND)
 
     def test_author_deletes_own_file(self):
         self.client.force_authenticate(self.member)
-        attachment_id = self.upload().data['id']
+        attachment_id = self.upload().data[0]['id']
         self.assertEqual(self.client.delete(f'{self.url}{attachment_id}/').status_code, 204)
 
     def test_delete_removes_file(self):
         self.client.force_authenticate(self.member)
-        attachment = TaskAttachment.objects.get(pk=self.upload().data['id'])
+        attachment = TaskAttachment.objects.get(pk=self.upload().data[0]['id'])
         path = attachment.file.path
         self.client.force_authenticate(self.other_member)
         self.assertEqual(self.client.delete(f'{self.url}{attachment.id}/').status_code, status.HTTP_403_FORBIDDEN)

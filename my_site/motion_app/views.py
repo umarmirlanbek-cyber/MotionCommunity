@@ -13,6 +13,7 @@ from django.utils.http import content_disposition_header
 from django.views.defaults import page_not_found
 from urllib.parse import quote
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import viewsets, generics, mixins, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -439,12 +440,14 @@ class TaskChildViewSet(
             task_id=self.kwargs.get('task_id'), task__project_id=self.kwargs.get('project_id')
         ).select_related('author')
 
-    def perform_create(self, serializer):
-        task = get_object_or_404(
+    def get_task(self):
+        return get_object_or_404(
             Task.objects.select_related('assignee', 'author'),
             pk=self.kwargs['task_id'], project_id=self.kwargs['project_id'],
         )
-        serializer.save(task=task, author=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(task=self.get_task(), author=self.request.user)
 
 
 class TaskCommentViewSet(mixins.UpdateModelMixin, TaskChildViewSet):
@@ -462,11 +465,34 @@ class TaskCommentViewSet(mixins.UpdateModelMixin, TaskChildViewSet):
         comment_created(serializer.instance)
 
 
+MAX_FILES_PER_UPLOAD = 10
+
+
 class TaskAttachmentViewSet(TaskChildViewSet):
     model = TaskAttachment
     serializer_class = TaskAttachmentSerializer
     parser_classes = [MultiPartParser]
     http_method_names = ['post', 'delete']
+
+    @swagger_auto_schema(responses={201: TaskAttachmentSerializer(many=True)})
+    def create(self, request, *args, **kwargs):
+        task = self.get_task()
+        files = request.FILES.getlist('file')
+        if not files:
+            self.get_serializer(data=request.data).is_valid(raise_exception=True)
+        if len(files) > MAX_FILES_PER_UPLOAD:
+            raise ValidationError({'file': [f'Не больше {MAX_FILES_PER_UPLOAD} файлов за раз']})
+        uploads = [self.get_serializer(data={'file': file}) for file in files]
+        errors = [
+            f'{upload.initial_data["file"].name}: {error}'
+            for upload in uploads if not upload.is_valid()
+            for messages in upload.errors.values() for error in messages
+        ]
+        if errors:
+            raise ValidationError({'file': errors})
+        for upload in uploads:
+            upload.save(task=task, author=request.user)
+        return Response([upload.data for upload in uploads], status=status.HTTP_201_CREATED)
 
 
 class TaskFileView(APIView):
