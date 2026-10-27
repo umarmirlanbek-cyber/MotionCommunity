@@ -114,7 +114,7 @@
 | POST | `projects/{project_id}/tasks/{task_id}/comments/` | участник проекта | `{text}` |
 | PATCH | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор комментария | `{text}` |
 | DELETE | `projects/{project_id}/tasks/{task_id}/comments/{id}/` | автор, Admin или тимлид проекта | |
-| POST | `projects/{project_id}/tasks/{task_id}/attachments/` | участник проекта | `multipart/form-data` с полем `file` |
+| POST | `projects/{project_id}/tasks/{task_id}/attachments/` | участник проекта | `multipart/form-data`, поле `file`, до 10 файлов за раз → список вложений |
 | DELETE | `projects/{project_id}/tasks/{task_id}/attachments/{id}/` | автор файла, Admin или тимлид проекта | |
 | GET | `me/tasks/` | вошедший | Мои задачи во всех моих проектах (где я исполнитель): поля как в списке + `project: {id, name}`. Фильтры `?status=`, `?priority=`, `?type=`, `?label=` |
 
@@ -281,9 +281,13 @@
 
 #### Вложения
 
-- загрузить: `POST projects/{project_id}/tasks/{task_id}/attachments/`, `multipart/form-data` с полем `file` → `201` `{id, author, file, name, created_at}`. Может любой участник проекта.
+- загрузить: `POST projects/{project_id}/tasks/{task_id}/attachments/`, `multipart/form-data`, поле `file`. Может любой участник проекта.
+  В одном запросе можно отправить до 10 файлов: поле `file` повторяется для каждого (в `FormData` - `append('file', ...)` на каждый файл).
+  Ответ `201` - всегда список `[{id, author, file, name, created_at}]` в том же порядке, даже если файл один.
+  Если хоть один файл не подходит, не сохраняется ничего: `400` `{"file": ["page.html: ..."]}`, в начале каждой ошибки имя файла. Больше 10 файлов → `400`.
 - форматы: `png`, `jpg`, `jpeg`, `gif`, `webp`, `pdf`, `doc`, `docx`, `xls`, `xlsx`, `txt`, `zip`, до 5 МБ. Остальное → `400`.
 - удалить: `DELETE .../attachments/{id}/` → `204`. Автор файла, тимлид или Admin. Файл удаляется и с диска.
+- фото при создании задачи: сначала `POST projects/{project_id}/tasks/` (JSON, как обычно), потом одним запросом все фото на `.../tasks/{id}/attachments/`. Если фото не загрузились, задача уже создана, загрузку можно повторить.
 
 Список приходит в карточке задачи, в поле `attachments`. `name` - имя файла, как его загрузили.
 
