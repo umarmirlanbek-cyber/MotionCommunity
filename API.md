@@ -50,7 +50,7 @@
 | GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status` |
 | PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки |
 | DELETE | `me/` | вошедший | Удалить свой аккаунт. Человек пропадёт из команд и проектов |
-| POST | `me/password/` | вошедший | `{old_password, new_password}`. Все refresh-токены отзываются: после смены пароля войдите заново |
+| POST | `me/password/` | вошедший | `{old_password, new_password}`. Все токены, и refresh, и текущий access, сразу перестают работать (`401`): после смены пароля войдите заново |
 | POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
 | PATCH, DELETE | `me/work/{id}/` | вошедший | Изменить или удалить запись (только свою) |
 | POST | `me/education/` | вошедший | `{institution, specialization, start_year, end_year, studying_now, description}`, годы - числа (`2021`) |
@@ -72,7 +72,7 @@
 | --- | --- | --- | --- |
 | GET | `users/` | Admin | Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
 | POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают refresh-токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают все токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
 
 ### Команды
 

@@ -118,14 +118,14 @@ docker compose up -d --build
 - без входа - не больше 120 запросов в минуту, с входом - 600;
 - файлы задач закрыты: они лежат не в `media`, а в отдельном томе `private_media_volume`. Скачать файл можно только по подписанной ссылке из API, она живёт час. Django проверяет подпись, а сам файл отдаёт nginx (`X-Accel-Redirect`, `TASK_FILES_X_ACCEL=True` в compose). Локально без nginx файл отдаёт Django;
 - все загруженные файлы хранятся под случайными именами, старый файл удаляется, когда его заменили или удалили запись;
-- смена пароля отзывает все refresh-токены пользователя.
+- смена пароля отзывает все токены пользователя, и refresh, и уже выданные access.
 
 Лимиты считаются в памяти каждого процесса gunicorn, их три, так что на деле лимит до трёх раз выше.
 Для точного подсчёта нужен общий кэш, например Redis.
 Лимит nginx на вход в админку считается по адресу того, кто подключился к nginx: за отдельным прокси он общий на всех.
 
 `docker compose ps` показывает у `web` состояние `healthy`, если Django отвечает и база доступна (адрес `/api/ru/health/`).
-Проверка ходит на `web`, поэтому `web` в `ALLOWED_HOSTS` нужен и для неё.
+Проверка ходит на `localhost` внутри контейнера.
 Ошибки 500 с полным трейсбеком: `docker compose logs web`.
 
 Создать админа: `docker compose exec web python manage.py createsuperuser`.
@@ -143,6 +143,7 @@ docker compose up -d --build
    ```
 
 2. Обновить: `git pull && docker compose up -d --build`. Миграции `web` применит сам.
+   После этого обновления всем придётся один раз войти заново: старые токены не содержат отметки пароля и больше не принимаются.
 3. Проверить файлы задач: `docker compose exec web ls private_media/task_files | head` показывает файлы,
    а в `media/task_files` их больше нет.
 4. Открыть в API карточку задачи со старым вложением (лучше с кириллицей в имени) и скачать файл по ссылке
@@ -164,8 +165,15 @@ docker compose up -d --build
 
    `motion-backup` не трогаем - он для отката. Переносим из `motion-move`.
 
-2. Взять версию, на которой работает перенос: `git fetch origin && git checkout 0969437`.
+2. Взять версию, на которой работает перенос, и исправленную миграцию `0005` из свежего кода:
+
+   ```bash
+   git fetch origin && git checkout 0969437
+   git show origin/master:my_site/motion_app/migrations/0005_rename_fields_and_convert_data.py > motion_app/migrations/0005_rename_fields_and_convert_data.py
+   ```
+
    Это последняя версия до миграций, которые работают только в Postgres: свежий код старый файл SQLite перевести не может.
+   В её `0005` ошибка: Admin, созданный через API, а не через `createsuperuser`, стал бы обычным участником.
    До свежего кода сайт обновится на шаге 7.
 
 3. Дописать в `.env` по образцу `.env.example`:
@@ -203,6 +211,7 @@ docker compose up -d --build
 7. Перейти на свежий код, `web` сам применит остальные миграции:
 
    ```bash
+   git checkout motion_app/migrations/0005_rename_fields_and_convert_data.py
    git checkout master && git pull
    docker compose up -d --build
    ```

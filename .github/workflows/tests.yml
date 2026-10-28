@@ -69,6 +69,9 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/task_files/x.png)" = 404
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/media/team_image/x.png)" = 200
           for i in $(seq 1 20); do curl -s -o /dev/null -w '%{http_code}\n' http://localhost/admin/login/; done | grep -q 429
+          head -c 30000000 /dev/zero > /tmp/big.bin
+          test "$(curl -s -o /dev/null -w '%{http_code}' -F file=@/tmp/big.bin http://localhost/api/ru/projects/1/tasks/1/attachments/)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -F file=@/tmp/big.bin http://localhost/api/ru/projects/)" = 413
       - name: Check a task file goes through nginx only by a signed link
         run: |
           URL=$(docker compose exec -T web python manage.py shell -v 0 -c "

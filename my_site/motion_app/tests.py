@@ -82,18 +82,26 @@ class AuthTests(MotionTestCase):
         self.client.force_authenticate(None)
         return self.client.post('/api/ru/auth/refresh/', {'refresh': refresh}).status_code
 
-    def test_password_change_revokes_refresh_tokens(self):
-        refresh = self.login()['refresh']
+    def access_status(self, access):
+        self.client.force_authenticate(None)
+        return self.client.get('/api/ru/me/', HTTP_AUTHORIZATION=f'Bearer {access}').status_code
+
+    def test_password_change_revokes_tokens(self):
+        tokens = self.login()
         self.client.force_authenticate(self.user)
         self.client.post('/api/ru/me/password/', {'old_password': 'Pass12345!word', 'new_password': 'NewPass12345!'})
-        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
-        self.assertEqual(self.refresh_status(self.login('NewPass12345!')['refresh']), status.HTTP_200_OK)
+        self.assertEqual(self.refresh_status(tokens['refresh']), status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.access_status(tokens['access']), status.HTTP_401_UNAUTHORIZED)
+        tokens = self.login('NewPass12345!')
+        self.assertEqual(self.access_status(tokens['access']), status.HTTP_200_OK)
+        self.assertEqual(self.refresh_status(tokens['refresh']), status.HTTP_200_OK)
 
-    def test_admin_password_reset_revokes_refresh_tokens(self):
-        refresh = self.login()['refresh']
+    def test_admin_password_reset_revokes_tokens(self):
+        tokens = self.login()
         self.client.force_authenticate(make_user('admin', role=RoleChoices.ADMIN))
         self.client.patch(f'/api/ru/users/{self.user.id}/', {'password': 'NewPass12345!'})
-        self.assertEqual(self.refresh_status(refresh), status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.refresh_status(tokens['refresh']), status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.access_status(tokens['access']), status.HTTP_401_UNAUTHORIZED)
 
     def test_refresh_of_deleted_user(self):
         refresh = self.login()['refresh']
@@ -1036,6 +1044,18 @@ class TaskAttachmentTests(ProjectTestCase):
             response = self.client.delete(f'{self.url}{attachment.id}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(os.path.exists(path))
+
+    def test_failed_file_delete_is_logged(self):
+        self.client.force_authenticate(self.member)
+        attachment_id = self.upload().data[0]['id']
+        with (
+            mock.patch('django.core.files.storage.FileSystemStorage.delete', side_effect=OSError('disk')),
+            self.assertLogs('django.test', 'ERROR'),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            response = self.client.delete(f'{self.url}{attachment_id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(TaskAttachment.objects.filter(pk=attachment_id).exists())
 
 
 class NotificationTests(ProjectTestCase):

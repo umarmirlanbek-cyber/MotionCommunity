@@ -21,7 +21,7 @@ services:
       python manage.py migrate &&
       gunicorn -b 0.0.0.0:8000 -w 3 my_site.wsgi:application"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://web:8000/api/ru/health/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ru/health/')"]
       interval: 30s
       timeout: 5s
       retries: 3
