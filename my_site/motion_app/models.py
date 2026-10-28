@@ -393,7 +393,7 @@ def file_fields(model):
 
 def delete_file_on_commit(storage, name):
     if name:
-        transaction.on_commit(lambda: storage.delete(name))
+        transaction.on_commit(lambda: storage.delete(name), robust=True)
 
 
 def delete_replaced_files(sender, instance, update_fields=None, **kwargs):

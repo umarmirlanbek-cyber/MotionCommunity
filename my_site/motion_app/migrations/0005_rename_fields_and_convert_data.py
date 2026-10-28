@@ -9,7 +9,9 @@ def convert_data(apps, schema_editor):
     Language = apps.get_model('motion_app', 'Language')
     ClientRequest = apps.get_model('motion_app', 'ClientRequest')
 
-    UserProfile.objects.filter(is_superuser=True).update(role='Admin', is_staff=True)
+    UserProfile.objects.filter(models.Q(is_superuser=True) | models.Q(role='Admin')).update(
+        role='Admin', is_staff=True, is_superuser=True
+    )
     UserProfile.objects.filter(is_superuser=False).update(role='Member', is_staff=False)
     UserProfile.objects.filter(position='UI/UX_Designer').update(position='UI_UX_Designer')
 
