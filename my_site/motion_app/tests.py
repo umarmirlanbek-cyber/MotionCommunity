@@ -1177,6 +1177,97 @@ class NotificationTests(ProjectTestCase):
         self.assertFalse(others.is_read)
 
 
+# ---------- Общая доска ----------
+
+class BoardTests(ProjectTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = make_user('admin', role=RoleChoices.ADMIN)
+        self.task = Task.objects.create(title='Заполнить таблицу', assignee=self.member, author=self.lead)
+        self.url = '/api/ru/board/tasks/'
+        self.task_url = f'{self.url}{self.task.id}/'
+
+    def received(self, user):
+        return list(Notification.objects.filter(user=user).values_list('type', flat=True))
+
+    def test_every_logged_in_user_sees_board(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.force_authenticate(self.outsider)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([task['title'] for task in response.data['results']], ['Заполнить таблицу'])
+        self.assertEqual(self.client.get(self.task_url).data['assignee']['id'], self.member.id)
+
+    def test_board_and_project_tasks_do_not_mix(self):
+        project_task = Task.objects.create(project=self.project, title='API уроков', author=self.outsider)
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual([task['title'] for task in self.client.get(self.url).data['results']], ['Заполнить таблицу'])
+        foreign = f'{self.url}{project_task.id}/'
+        for method, url in (('get', foreign), ('patch', foreign), ('delete', foreign), ('post', f'{foreign}comments/')):
+            self.assertEqual(getattr(self.client, method)(url, {'text': 'x'}).status_code, 404, (method, url))
+        self.client.force_authenticate(self.member)
+        response = self.client.get(f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_anyone_creates_and_assigns_any_active_user(self):
+        self.client.force_authenticate(self.outsider)
+        response = self.client.post(self.url, {'title': 'Доска объявлений', 'assignee_id': self.other_member.id})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['author']['id'], self.outsider.id)
+        self.assertIsNone(Task.objects.get(pk=response.data['id']).project)
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.ASSIGNED])
+        self.other_member.is_active = False
+        self.other_member.save()
+        response = self.client.post(self.url, {'title': 'X', 'assignee_id': self.other_member.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('assignee_id', response.data)
+
+    def test_author_assignee_or_admin_edit(self):
+        self.client.force_authenticate(self.other_member)
+        self.assertEqual(self.client.patch(self.task_url, {'title': 'Y'}).status_code, status.HTTP_403_FORBIDDEN)
+        for user in (self.member, self.lead, self.admin):
+            self.client.force_authenticate(user)
+            response = self.client.patch(self.task_url, {'status': TaskStatusChoices.IN_PROGRESS})
+            self.assertEqual(response.status_code, status.HTTP_200_OK, user)
+
+    def test_author_or_admin_deletes(self):
+        for user in (self.member, self.other_member):
+            self.client.force_authenticate(user)
+            self.assertEqual(self.client.delete(self.task_url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.delete(self.task_url).status_code, status.HTTP_204_NO_CONTENT)
+        task = Task.objects.create(title='X', author=self.member)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(f'{self.url}{task.id}/').status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_comments_files_and_notifications(self):
+        self.client.force_authenticate(self.outsider)
+        response = self.client.post(f'{self.task_url}comments/', {'text': '@dev2 глянь'})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.received(self.other_member), [NotificationTypeChoices.MENTION])
+        self.assertEqual(self.received(self.member), [NotificationTypeChoices.COMMENT])
+        self.assertEqual(self.received(self.lead), [NotificationTypeChoices.COMMENT])
+        response = self.client.post(
+            f'{self.task_url}attachments/', {'file': SimpleUploadedFile('table.png', b'data')}, format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        card = self.client.get(self.task_url).data
+        self.assertEqual((len(card['comments']), card['attachments'][0]['name']), (1, 'table.png'))
+        self.client.force_authenticate(self.other_member)
+        notification = self.client.get('/api/ru/me/notifications/').data['results'][0]
+        self.assertEqual((notification['task']['id'], notification['task']['project']), (self.task.id, None))
+
+    def test_my_tasks_and_labels(self):
+        Task.objects.create(title='Метки', labels=['офис'])
+        Task.objects.create(project=self.project, title='API уроков', labels=['backend'])
+        self.client.force_authenticate(self.member)
+        response = self.client.get('/api/ru/me/tasks/')
+        self.assertEqual(
+            [(task['title'], task['project']) for task in response.data['results']], [('Заполнить таблицу', None)]
+        )
+        self.assertEqual(self.client.get(f'{self.url}labels/').data, ['офис'])
+
+
 # ---------- Заявки клиентов ----------
 
 REQUEST_DATA = {

@@ -251,7 +251,7 @@ class ProjectMember(models.Model):
 # ---------- Задачи ----------
 
 class Task(models.Model):
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='tasks')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='tasks', null=True, blank=True)
     title = models.CharField('Название', max_length=255)
     description = models.TextField('Описание', blank=True)
     status = models.CharField(max_length=20, choices=TaskStatusChoices.choices, default=TaskStatusChoices.TO_DO)
@@ -287,7 +287,9 @@ class Task(models.Model):
 def can_be_assignee(project_id, user_id, current_assignee_id=None, lock=False):
     if not user_id or user_id == current_assignee_id:
         return True
-    members = ProjectMember.objects.select_for_update() if lock else ProjectMember.objects
+    if project_id is None:
+        return UserProfile.objects.filter(pk=user_id, is_active=True).exists()
+    members =ProjectMember.objects.select_for_update() if lock else ProjectMember.objects
     return members.filter(project_id=project_id, user_id=user_id, user__is_active=True).exists()
 
 

@@ -42,6 +42,7 @@ class Command(BaseCommand):
         self.distribute(leads, developers, teams, projects)
         self.create_resume(developers[0])
         self.create_tasks(projects[0])
+        self.create_board_tasks(leads + developers)
         self.create_client_requests()
 
         self.stdout.write(self.style.SUCCESS(
@@ -198,6 +199,18 @@ class Command(BaseCommand):
             )
             if task_status == TaskStatusChoices.REVIEW:
                 TaskComment.objects.create(task=task, author=lead, text='Посмотрю сегодня вечером.')
+
+    # ---------- Общая доска (задачи без проекта) ----------
+
+    def create_board_tasks(self, users):
+        data = [
+            ('Заполнить таблицу участников', TaskStatusChoices.TO_DO, ['организация']),
+            ('Подготовить демо для клиентов', TaskStatusChoices.IN_PROGRESS, ['демо']),
+        ]
+        for i, (title, task_status, labels) in enumerate(data):
+            Task.objects.create(
+                title=title, status=task_status, labels=labels, assignee=users[i + 1], author=users[0],
+            )
 
     # ---------- Client requests ----------
 

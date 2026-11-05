@@ -1,13 +1,14 @@
 import re
 
 from django.core.signing import TimestampSigner
+from django.db.models import Q
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import get_language
 from rest_framework.exceptions import ValidationError
 
 from .choices import RoleChoices, NotificationTypeChoices
-from .models import UserProfile, ProjectMember, Task, TaskHistory, Notification, revoke_tokens
+from .models import UserProfile, Task, TaskHistory, Notification, revoke_tokens
 
 TASK_HISTORY_FIELDS = ('title', 'status', 'priority', 'type', 'labels', 'assignee', 'due_date')
 MENTION_RE = re.compile(r'(?<!\w)@([\w.@+-]+)')
@@ -57,18 +58,22 @@ def task_changed(old, task, actor):
         notify([task.assignee], actor, task, NotificationTypeChoices.ASSIGNED)
 
 
+def task_viewers(task):
+    if task.project_id is None:
+        return UserProfile.objects.all()
+    return UserProfile.objects.filter(project_memberships__project_id=task.project_id)
+
+
 def comment_created(comment):
     task = comment.task
     names = list(dict.fromkeys(MENTION_RE.findall(comment.text)))[:MAX_MENTIONS]
-    members = UserProfile.objects.filter(
-        username__in={*names, *(name.rstrip('.') for name in names)}, project_memberships__project_id=task.project_id
-    )
+    members = task_viewers(task).filter(username__in={*names, *(name.rstrip('.') for name in names)})
     by_username = {user.username: user for user in members}
     mentioned = [user for name in names if (user := by_username.get(name) or by_username.get(name.rstrip('.')))]
     notify(mentioned, comment.author, task, NotificationTypeChoices.MENTION, comment)
-    member_ids = set(ProjectMember.objects.filter(
-        project_id=task.project_id, user_id__in=[task.assignee_id, task.author_id]
-    ).values_list('user_id', flat=True))
+    member_ids = set(
+        task_viewers(task).filter(pk__in=[task.assignee_id, task.author_id]).values_list('pk', flat=True)
+    )
     others = [
         user for user in (task.assignee, task.author)
         if user and user.id in member_ids and user not in mentioned
@@ -77,7 +82,9 @@ def comment_created(comment):
 
 
 def visible_notifications(user_id):
-    return Notification.objects.filter(user_id=user_id, task__project__members__user_id=user_id)
+    return Notification.objects.filter(
+        Q(task__project__members__user_id=user_id) | Q(task__project__isnull=True), user_id=user_id
+    )
 
 
 def member_removed(member, actor):

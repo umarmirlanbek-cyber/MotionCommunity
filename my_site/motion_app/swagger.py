@@ -8,6 +8,7 @@ TAG_NAMES = {
     'teams': 'Teams',
     'projects': 'Projects',
     'tasks': 'Tasks',
+    'board': 'Board',
     'client-requests': 'Client requests',
     'choices': 'Common',
     'stats': 'Common',
@@ -58,11 +59,17 @@ class SectionAutoSchema(SwaggerAutoSchema):
     def get_tags(self, operation_keys=None):
         operation_keys = operation_keys or self.operation_keys
         section = operation_keys[1] if len(operation_keys) > 1 else operation_keys[0]
-        if 'tasks' in operation_keys:
+        if 'tasks' in operation_keys and section != 'board':
             section = 'tasks'
         return [TAG_NAMES.get(section, section)]
 
     def get_summary_and_description(self):
+        summary, description = self.section_summary_and_description()
+        if self.operation_keys[1:2] == ['board']:
+            summary = f'{summary} on board'
+        return summary, description
+
+    def section_summary_and_description(self):
         summary, description = super().get_summary_and_description()
 
         keys = self.operation_keys
