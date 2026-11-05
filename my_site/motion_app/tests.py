@@ -1192,6 +1192,8 @@ class BoardTests(ProjectTestCase):
 
     def test_every_logged_in_user_sees_board(self):
         self.assertEqual(self.client.get(self.url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.post(self.url, {'title': 'X'}).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.post(f'{self.task_url}comments/', {'text': 'x'}).status_code, 401)
         self.client.force_authenticate(self.outsider)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1202,12 +1204,24 @@ class BoardTests(ProjectTestCase):
         project_task = Task.objects.create(project=self.project, title='API уроков', author=self.outsider)
         self.client.force_authenticate(self.outsider)
         self.assertEqual([task['title'] for task in self.client.get(self.url).data['results']], ['Заполнить таблицу'])
+        comment = TaskComment.objects.create(task=project_task, author=self.outsider, text='x')
+        attachment = TaskAttachment.objects.create(
+            task=project_task, author=self.outsider, file='task_files/x.png', name='x.png'
+        )
         foreign = f'{self.url}{project_task.id}/'
-        for method, url in (('get', foreign), ('patch', foreign), ('delete', foreign), ('post', f'{foreign}comments/')):
-            self.assertEqual(getattr(self.client, method)(url, {'text': 'x'}).status_code, 404, (method, url))
+        for method, url in (
+            ('get', foreign), ('patch', foreign), ('delete', foreign), ('post', f'{foreign}comments/'),
+            ('patch', f'{foreign}comments/{comment.id}/'), ('delete', f'{foreign}comments/{comment.id}/'),
+            ('delete', f'{self.task_url}comments/{comment.id}/'), ('delete', f'{foreign}attachments/{attachment.id}/'),
+        ):
+            self.assertEqual(getattr(self.client, method)(url, {'text': 'y'}).status_code, 404, (method, url))
         self.client.force_authenticate(self.member)
-        response = self.client.get(f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/')
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        board_comment = TaskComment.objects.create(task=self.task, author=self.member, text='x')
+        project_url = f'/api/ru/projects/{self.project.id}/tasks/{self.task.id}/'
+        for method, url in (('get', project_url), ('delete', f'{project_url}comments/{board_comment.id}/')):
+            self.assertEqual(getattr(self.client, method)(url).status_code, 404, (method, url))
+        self.assertTrue(TaskComment.objects.filter(pk=comment.pk, text='x').exists())
+        self.assertTrue(TaskAttachment.objects.filter(pk=attachment.pk).exists())
 
     def test_anyone_creates_and_assigns_any_active_user(self):
         self.client.force_authenticate(self.outsider)
@@ -1239,6 +1253,58 @@ class BoardTests(ProjectTestCase):
         task = Task.objects.create(title='X', author=self.member)
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.delete(f'{self.url}{task.id}/').status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_comment_and_file_authors_or_admin_delete(self):
+        comment = TaskComment.objects.create(task=self.task, author=self.member, text='x')
+        attachment = TaskAttachment.objects.create(
+            task=self.task, author=self.member, file='task_files/x.png', name='x.png'
+        )
+        comment_url = f'{self.task_url}comments/{comment.id}/'
+        attachment_url = f'{self.task_url}attachments/{attachment.id}/'
+        self.client.force_authenticate(self.lead)
+        self.assertEqual(self.client.patch(comment_url, {'text': 'y'}).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.delete(comment_url).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.delete(attachment_url).status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.client.patch(comment_url, {'text': 'y'}).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.delete(comment_url).status_code, status.HTTP_204_NO_CONTENT)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(attachment_url).status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_board_queries_do_not_grow(self):
+        def counts():
+            result = []
+            for url in (self.url, self.task_url, '/api/ru/me/tasks/', '/api/ru/me/notifications/'):
+                with CaptureQueriesContext(connection) as queries:
+                    self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+                result.append(len(queries))
+            return result
+
+        def add_activity(times):
+            for i in range(times):
+                task = Task.objects.create(title=f'T{i}', assignee=self.member, author=self.other_member)
+                comment = TaskComment.objects.create(task=self.task, author=self.other_member, text='x')
+                TaskHistory.objects.create(task=self.task, user=self.lead, field='status')
+                TaskAttachment.objects.create(task=self.task, author=self.lead, file='task_files/x.png', name='x.png')
+                Notification.objects.create(
+                    user=self.member, actor=self.other_member, task=task, comment=comment,
+                    type=NotificationTypeChoices.COMMENT,
+                )
+
+        self.client.force_authenticate(self.member)
+        add_activity(1)
+        before = counts()
+        add_activity(10)
+        self.assertEqual(counts(), before)
+
+    def test_admin_site_works_with_board_tasks(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.get('/admin/motion_app/task/').status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(f'/admin/motion_app/task/{self.task.id}/change/').status_code, 200)
+        request = RequestFactory().get('/admin/')
+        request.user = self.admin
+        self.assertFalse(TaskAdmin(Task, site).get_form(request).base_fields['project'].required)
+        Task(title='X', author=self.lead, assignee=self.outsider).full_clean()
 
     def test_comments_files_and_notifications(self):
         self.client.force_authenticate(self.outsider)
