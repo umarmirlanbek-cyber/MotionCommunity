@@ -66,7 +66,7 @@ server {
         proxy_pass http://web:8000;
     }
 
-    location ~ ^/api/[^/]+/projects/\d+/tasks/\d+/attachments/$ {
+    location ~ ^/api/[^/]+/(projects/\d+/|board/)tasks/\d+/attachments/$ {
         client_max_body_size 55M;
         proxy_pass http://web:8000;
     }

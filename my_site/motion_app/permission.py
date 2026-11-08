@@ -9,6 +9,8 @@ def is_admin(user):
 
 def project_role(request, view):
     project_id = view.kwargs[getattr(view, 'project_lookup_kwarg', 'project_id')]
+    if project_id is None:
+        return MemberRoleChoices.MEMBER
     if not hasattr(request, 'project_roles'):
         request.project_roles = {}
     if project_id not in request.project_roles:

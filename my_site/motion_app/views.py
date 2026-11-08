@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.core.signing import BadSignature, SignatureExpired
 from django.conf import settings
 from django.db import DatabaseError, IntegrityError, connection, transaction
-from django.db.models import CharField, Count, F, Func, Prefetch
+from django.db.models import CharField, Count, F, Func, Prefetch, Q
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import translation
@@ -377,6 +377,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == 'destroy':
+            if self.kwargs.get('project_id') is None:
+                return [IsAdminOrProjectMember(), IsAuthorOrProjectTeamLead()]
             return [IsAdminOrProjectTeamLead()]
         if self.action == 'partial_update':
             return [IsAdminOrProjectMember(), CanEditTask()]
@@ -402,7 +404,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        project = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        project_id = self.kwargs['project_id']
+        project = get_object_or_404(Project, pk=project_id) if project_id is not None else None
         task = serializer.save(project=project, author=self.request.user)
         task_created(task, self.request.user)
 
@@ -531,7 +534,8 @@ class MyTaskListAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         return Task.objects.filter(
-            assignee_id=self.request.user.id, project__members__user_id=self.request.user.id
+            Q(project__members__user_id=self.request.user.id) | Q(project__isnull=True),
+            assignee_id=self.request.user.id,
         ).select_related('assignee', 'project')
 
 
