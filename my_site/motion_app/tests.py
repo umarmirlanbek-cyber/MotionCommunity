@@ -316,6 +316,32 @@ class MembersTests(MotionTestCase):
         self.assertEqual(response.data['work'][0]['company'], 'Motion')
         self.assertNotIn('role', response.data)
 
+    def test_admin_on_showcase_only_with_flag(self):
+        UserProfile.objects.filter(pk=self.admin.pk).update(first_name='Бекбол', positions=['AI_ML_Engineer'])
+
+        def showcase():
+            cache.clear()
+            ids = [member['id'] for member in self.client.get('/api/ru/members/').data['results']]
+            found = [
+                member['id'] for member in
+                self.client.get('/api/ru/members/', {'search': 'Бекбол', 'position': 'AI_ML_Engineer'}).data['results']
+            ]
+            detail = self.client.get(f'/api/ru/members/{self.admin.id}/').status_code
+            count = self.client.get('/api/ru/stats/').data['members_count']
+            return self.admin.id in ids, found == [self.admin.id], detail, count
+
+        self.assertEqual(showcase(), (False, False, status.HTTP_404_NOT_FOUND, 1))
+        self.client.force_authenticate(self.admin)
+        self.assertFalse(self.client.get('/api/ru/me/').data['show_on_showcase'])
+        response = self.client.patch(f'/api/ru/users/{self.admin.id}/', {'show_on_showcase': True}, format='json')
+        self.assertEqual((response.status_code, response.data['show_on_showcase']), (status.HTTP_200_OK, True))
+        self.client.patch('/api/ru/me/', {'show_on_showcase': False}, format='json')
+        self.assertTrue(self.client.get('/api/ru/me/').data['show_on_showcase'])
+        self.client.force_authenticate(None)
+        self.assertEqual(showcase(), (True, True, status.HTTP_200_OK, 2))
+        UserProfile.objects.filter(pk=self.admin.pk).update(status=StatusChoices.INACTIVE)
+        self.assertEqual(showcase(), (False, False, status.HTTP_404_NOT_FOUND, 1))
+
     def test_filter_by_any_of_positions(self):
         UserProfile.objects.filter(pk=self.active.pk).update(positions=['Frontend_Developer', 'AI_ML_Engineer'])
         backend = make_user('dev3')
@@ -394,6 +420,24 @@ class UsersAdminTests(MotionTestCase):
         demoted = form(role=RoleChoices.MEMBER)
         self.assertTrue(demoted.is_valid(), demoted.errors)
         self.assertEqual(self.client.post(delete_url, {'post': 'yes'}).status_code, status.HTTP_302_FOUND)
+
+    def test_show_on_showcase_only_for_admins(self):
+        self.client.force_authenticate(self.admin)
+        member_url = f'/api/ru/users/{self.member.id}/'
+        response = self.client.patch(member_url, {'show_on_showcase': False}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {'show_on_showcase': ['Только для администраторов']})
+        response = self.client.patch(f'/api/ru/users/{self.admin.id}/', {'show_on_showcase': 'maybe'}, format='json')
+        self.assertEqual(list(response.data), ['show_on_showcase'])
+        response = self.client.patch(member_url, {'role': RoleChoices.ADMIN, 'show_on_showcase': True}, format='json')
+        self.assertEqual((response.status_code, response.data['show_on_showcase']), (status.HTTP_200_OK, True))
+        users = {user['id']: user['show_on_showcase'] for user in self.client.get('/api/ru/users/').data['results']}
+        self.assertEqual(users, {self.admin.id: False, self.member.id: True})
+        response = self.client.patch(member_url, {'role': RoleChoices.MEMBER}, format='json')
+        self.assertEqual((response.status_code, response.data['show_on_showcase']), (status.HTTP_200_OK, False))
+        self.client.force_authenticate(self.member)
+        response = self.client.patch(f'/api/ru/users/{self.admin.id}/', {'show_on_showcase': True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_users_show_avatar(self):
         UserProfile.objects.filter(pk=self.member.pk).update(avatar='members_image/face.png')

@@ -69,7 +69,7 @@ class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Личные данные', {'fields': ('first_name', 'last_name', 'email')}),
-        ('Доступ', {'fields': ('role', 'status', 'is_active')}),
+        ('Доступ', {'fields': ('role', 'status', 'is_active', 'show_on_showcase')}),
         ('Профиль', {'fields': ('avatar', 'bio', 'positions', 'skills', 'github', 'linkedin', 'portfolio', 'resume')}),
     )
     inlines = [WorkExperienceInline, EducationInline, LanguageInline, CertificateInline]
