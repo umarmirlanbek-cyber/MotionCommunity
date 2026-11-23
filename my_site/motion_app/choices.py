@@ -18,6 +18,7 @@ class PositionChoices(models.TextChoices):
     UI_UX_DESIGNER = 'UI_UX_Designer', 'UI/UX Designer'
     QA_ENGINEER = 'QA_Engineer', 'QA Engineer'
     MOBILE_DEVELOPER = 'Mobile_Developer', 'Mobile Developer'
+    AI_ML_ENGINEER = 'AI_ML_Engineer', 'AI/ML Engineer'
 
 
 class MemberRoleChoices(models.TextChoices):

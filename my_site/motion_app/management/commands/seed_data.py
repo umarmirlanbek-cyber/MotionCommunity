@@ -78,7 +78,7 @@ class Command(BaseCommand):
                 password=password,
                 first_name=first,
                 last_name=last,
-                position=position,
+                positions=[position],
                 status=StatusChoices.ACTIVE,
                 bio=bio.format(first=first, last=last, position=PositionChoices(position).label),
             )

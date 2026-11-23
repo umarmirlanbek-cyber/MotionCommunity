@@ -13,7 +13,7 @@ from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, TaskHistory, ClientRequest
 )
-from .choices import RoleChoices
+from .choices import RoleChoices, PositionChoices
 from .services import (
     task_created, task_changed, comment_created, member_removed, task_file_url, leaves_no_admin, LAST_ADMIN_ERROR,
 )
@@ -40,6 +40,10 @@ class CertificateInline(admin.StackedInline):
 
 
 class UserProfileChangeForm(UserChangeForm):
+    positions = forms.MultipleChoiceField(
+        label='Направления', choices=PositionChoices.choices, widget=forms.CheckboxSelectMultiple
+    )
+
     def clean(self):
         cleaned_data = super().clean()
         demoted = cleaned_data.get('role', self.instance.role) != RoleChoices.ADMIN
@@ -66,7 +70,7 @@ class UserProfileAdmin(TabbedTranslationAdmin, UserAdmin):
         (None, {'fields': ('username', 'password')}),
         ('Личные данные', {'fields': ('first_name', 'last_name', 'email')}),
         ('Доступ', {'fields': ('role', 'status', 'is_active')}),
-        ('Профиль', {'fields': ('avatar', 'bio', 'position', 'skills', 'github', 'linkedin', 'portfolio', 'resume')}),
+        ('Профиль', {'fields': ('avatar', 'bio', 'positions', 'skills', 'github', 'linkedin', 'portfolio', 'resume')}),
     )
     inlines = [WorkExperienceInline, EducationInline, LanguageInline, CertificateInline]
 

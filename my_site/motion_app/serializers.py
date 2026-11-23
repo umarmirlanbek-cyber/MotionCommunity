@@ -105,9 +105,11 @@ class CertificateSerializer(serializers.ModelSerializer):
 # ---------- Участники (публично) ----------
 
 class MemberShortSerializer(serializers.ModelSerializer):
+    position = serializers.CharField(read_only=True)
+
     class Meta:
         model = UserProfile
-        fields = ('id', 'first_name', 'last_name', 'position', 'avatar')
+        fields = ('id', 'first_name', 'last_name', 'position', 'positions', 'avatar')
 
 
 class MemberTeamSerializer(serializers.ModelSerializer):
@@ -138,11 +140,12 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     certificates = CertificateSerializer(many=True, read_only=True)
     teams = MemberTeamSerializer(source='team_memberships', many=True, read_only=True)
     projects = MemberProjectSerializer(source='project_memberships', many=True, read_only=True)
+    position = serializers.CharField(read_only=True)
 
     class Meta:
         model = UserProfile
         fields = (
-            'id', 'first_name', 'last_name', 'avatar', 'bio', 'position',
+            'id', 'first_name', 'last_name', 'avatar', 'bio', 'position', 'positions',
             'skills', 'github', 'linkedin', 'portfolio', 'resume',
             'work', 'education', 'languages', 'certificates', 'teams', 'projects',
         )
@@ -155,6 +158,9 @@ class MeSerializer(MemberDetailSerializer):
         model = UserProfile
         fields = MemberDetailSerializer.Meta.fields + ('username', 'email', 'role', 'status', 'created_at')
         read_only_fields = ('username', 'role', 'status')
+
+    def validate_positions(self, value):
+        return list(dict.fromkeys(value))
 
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
@@ -170,7 +176,7 @@ class MeSerializer(MemberDetailSerializer):
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
-        fields = ('id', 'username', 'first_name', 'last_name', 'role', 'status', 'is_active')
+        fields = ('id', 'username', 'first_name', 'last_name', 'avatar', 'role', 'status', 'is_active')
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -190,10 +196,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = (
-            'id', 'username', 'password', 'email', 'first_name', 'last_name',
+            'id', 'username', 'password', 'email', 'first_name', 'last_name', 'avatar',
             'role', 'status', 'is_active', 'created_at',
         )
-        read_only_fields = ('status',)
+        read_only_fields = ('avatar', 'status')
 
     def validate(self, attrs):
         demoted = attrs.get('role', self.instance.role) != RoleChoices.ADMIN

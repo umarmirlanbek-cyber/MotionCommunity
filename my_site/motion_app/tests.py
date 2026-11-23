@@ -208,14 +208,31 @@ class MeTests(MotionTestCase):
         self.assertEqual(count(), before)
 
     def test_profile_patch_does_not_undo_admin_changes(self):
-        UserProfile.objects.filter(pk=self.user.pk).update(position=PositionChoices.QA_ENGINEER)
+        UserProfile.objects.filter(pk=self.user.pk).update(positions=[PositionChoices.QA_ENGINEER])
         response = self.client.patch('/api/en/me/', {'first_name': 'Азамат', 'bio': 'Backend developer'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.user.refresh_from_db()
         self.assertEqual(
-            (self.user.position, self.user.first_name, self.user.bio_en, self.user.status),
-            (PositionChoices.QA_ENGINEER, 'Азамат', 'Backend developer', StatusChoices.ACTIVE),
+            (self.user.positions, self.user.first_name, self.user.bio_en, self.user.status),
+            ([PositionChoices.QA_ENGINEER], 'Азамат', 'Backend developer', StatusChoices.ACTIVE),
         )
+
+    def test_several_positions(self):
+        response = self.client.patch(
+            '/api/ru/me/', {'positions': ['AI_ML_Engineer', 'Backend_Developer', 'AI_ML_Engineer']}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            (response.data['position'], response.data['positions']), ('AI_ML_Engineer', ['AI_ML_Engineer', 'Backend_Developer'])
+        )
+        for wrong in ([], ['Pilot'], 'QA_Engineer'):
+            response = self.client.patch('/api/ru/me/', {'positions': wrong}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.client.patch('/api/ru/me/', {'positions': ['QA_Engineer', 'UI_UX_Designer']}, format='multipart')
+        self.assertEqual(response.data['positions'], ['QA_Engineer', 'UI_UX_Designer'])
+        self.client.patch('/api/ru/me/', {'position': 'Mobile_Developer', 'bio': 'QA'}, format='json')
+        self.user.refresh_from_db()
+        self.assertEqual((self.user.positions, self.user.bio), (['QA_Engineer', 'UI_UX_Designer'], 'QA'))
 
     def test_change_password_needs_old_password(self):
         response = self.client.post('/api/ru/me/password/', {'old_password': 'wrong', 'new_password': 'NewPass12345!'})
@@ -299,6 +316,27 @@ class MembersTests(MotionTestCase):
         self.assertEqual(response.data['work'][0]['company'], 'Motion')
         self.assertNotIn('role', response.data)
 
+    def test_filter_by_any_of_positions(self):
+        UserProfile.objects.filter(pk=self.active.pk).update(positions=['Frontend_Developer', 'AI_ML_Engineer'])
+        backend = make_user('dev3')
+
+        def found(position):
+            response = self.client.get('/api/ru/members/', {'position': position})
+            return [(member['id'], member['position'], member['positions']) for member in response.data['results']]
+
+        self.assertEqual(found('AI_ML_Engineer'), [(self.active.id, 'Frontend_Developer', ['Frontend_Developer', 'AI_ML_Engineer'])])
+        self.assertEqual(found('Backend_Developer'), [(backend.id, 'Backend_Developer', ['Backend_Developer'])])
+        self.assertEqual(found('QA_Engineer'), [])
+        response = self.client.get('/api/ru/members/', {'position': 'Pilot'})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.client.get(f'/api/ru/members/{self.active.id}/')
+        self.assertEqual(response.data['positions'], ['Frontend_Developer', 'AI_ML_Engineer'])
+        team = Team.objects.create(name='Alpha')
+        TeamMember.objects.create(team=team, user=self.active)
+        self.client.force_authenticate(self.active)
+        user = self.client.get(f'/api/ru/teams/{team.id}/').data['members'][0]['user']
+        self.assertEqual((user['position'], user['positions']), ('Frontend_Developer', ['Frontend_Developer', 'AI_ML_Engineer']))
+
 
 class UsersAdminTests(MotionTestCase):
     def setUp(self):
@@ -356,6 +394,33 @@ class UsersAdminTests(MotionTestCase):
         demoted = form(role=RoleChoices.MEMBER)
         self.assertTrue(demoted.is_valid(), demoted.errors)
         self.assertEqual(self.client.post(delete_url, {'post': 'yes'}).status_code, status.HTTP_302_FOUND)
+
+    def test_users_show_avatar(self):
+        UserProfile.objects.filter(pk=self.member.pk).update(avatar='members_image/face.png')
+        self.client.force_authenticate(self.admin)
+        avatars = {user['id']: user['avatar'] for user in self.client.get('/api/ru/users/').data['results']}
+        self.assertIsNone(avatars[self.admin.id])
+        self.assertTrue(avatars[self.member.id].startswith('http://testserver/'))
+        self.assertTrue(avatars[self.member.id].endswith('members_image/face.png'))
+        url = f'/api/ru/users/{self.member.id}/'
+        self.assertEqual(self.client.get(url).data['avatar'], avatars[self.member.id])
+        response = self.client.patch(url, {'avatar': None, 'first_name': 'Азамат'}, format='json')
+        self.assertEqual((response.status_code, response.data['avatar']), (status.HTTP_200_OK, avatars[self.member.id]))
+
+    def test_django_admin_edits_positions(self):
+        request = RequestFactory().post('/admin/')
+        request.user = self.admin
+        form_class = UserProfileAdmin(UserProfile, site).get_form(request, self.member)
+        data = model_to_dict(self.member)
+        self.assertFalse(form_class(data={**data, 'positions': []}, instance=self.member).is_valid())
+        form = form_class(data={**data, 'positions': ['AI_ML_Engineer', 'QA_Engineer']}, instance=self.member)
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.positions, ['AI_ML_Engineer', 'QA_Engineer'])
+        self.client.force_login(self.admin)
+        response = self.client.get(f'/admin/motion_app/userprofile/{self.member.id}/change/')
+        self.assertContains(response, 'value="AI_ML_Engineer"')
 
     def test_admin_delete_revokes_refresh_tokens(self):
         refresh = self.client.post('/api/ru/auth/login/', {'username': 'dev1', 'password': 'Pass12345!word'}).data['refresh']
@@ -1465,6 +1530,7 @@ class ChoicesTests(MotionTestCase):
         response = self.client.get('/api/ru/choices/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn({'value': 'UI_UX_Designer', 'label': 'UI/UX Designer'}, response.data['positions'])
+        self.assertIn({'value': 'AI_ML_Engineer', 'label': 'AI/ML Engineer'}, response.data['positions'])
 
 
 class NotFoundTests(MotionTestCase):
