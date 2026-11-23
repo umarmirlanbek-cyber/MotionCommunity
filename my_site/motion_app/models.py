@@ -36,6 +36,10 @@ def validate_file_size(file):
 validate_label = RegexValidator(r'^[^,]+$', 'Метка не может содержать запятую')
 
 
+def default_positions():
+    return [PositionChoices.BACKEND_DEVELOPER]
+
+
 @deconstructible
 class RandomName:
     def __init__(self, folder):
@@ -79,8 +83,9 @@ class UserProfile(AbstractUser):
         'Аватар участника', upload_to=RandomName('members_image'), blank=True, null=True, validators=[validate_file_size]
     )
     bio = models.TextField('О себе', blank=True)
-    position = models.CharField(
-        'Должность', max_length=50, choices=PositionChoices.choices, default=PositionChoices.BACKEND_DEVELOPER
+    positions = ArrayField(
+        models.CharField(max_length=50, choices=PositionChoices.choices), verbose_name='Направления',
+        default=default_positions,
     )
     skills = models.TextField('Навыки', blank=True)
     github = models.URLField('Гитхаб', blank=True, null=True)
@@ -101,6 +106,10 @@ class UserProfile(AbstractUser):
 
     def __str__(self):
         return f'{self.first_name} {self.last_name}'.strip() or self.username
+
+    @property
+    def position(self):
+        return self.positions[0] if self.positions else None
 
     def save(self, *args, **kwargs):
         self.is_staff = self.role == RoleChoices.ADMIN

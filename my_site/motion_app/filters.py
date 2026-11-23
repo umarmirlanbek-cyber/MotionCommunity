@@ -1,5 +1,13 @@
 from django_filters import rest_framework as filters
+from .choices import PositionChoices
 from .models import Task
+
+
+class MemberFilter(filters.FilterSet):
+    position = filters.ChoiceFilter(choices=PositionChoices.choices, method='filter_position')
+
+    def filter_position(self, queryset, name, value):
+        return queryset.filter(positions__contains=[value])
 
 
 class TaskFilter(filters.FilterSet):

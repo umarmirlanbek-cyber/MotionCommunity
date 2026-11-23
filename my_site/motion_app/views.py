@@ -34,7 +34,7 @@ from .models import (
     UserProfile, WorkExperience, Education, Language, Certificate,
     Team, TeamMember, Project, ProjectMember, Task, TaskComment, TaskAttachment, ClientRequest,
 )
-from .filters import TaskFilter, MyTaskFilter
+from .filters import MemberFilter, TaskFilter, MyTaskFilter
 from .permission import (
     is_admin, IsAdmin, IsAdminOrTeamLead, IsAdminOrProjectTeamLead, IsAdminOrProjectMember,
     IsAuthor, IsAuthorOrProjectTeamLead, CanEditTask,
@@ -181,7 +181,7 @@ class MemberListAPIView(generics.ListAPIView):
     serializer_class = MemberShortSerializer
     permission_classes = [AllowAny]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['position']
+    filterset_class = MemberFilter
     search_fields = ['first_name', 'last_name', 'skills']
 
 

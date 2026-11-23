@@ -48,7 +48,7 @@
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
 | GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status` |
-| PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки |
+| PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки. Направления - `positions`, см. ниже |
 | DELETE | `me/` | вошедший | Удалить свой аккаунт. Человек пропадёт из команд и проектов |
 | POST | `me/password/` | вошедший | `{old_password, new_password}`. Все токены, и refresh, и текущий access, сразу перестают работать (`401`): после смены пароля войдите заново |
 | POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
@@ -59,20 +59,22 @@
 
 Для `education`, `languages` и `certificates` адрес `.../{id}/` работает так же, как у `work`: `PATCH` и `DELETE`.
 
+**Направления.** `positions` - список, минимум одно значение из `choices/` → `positions`, повторы убираются: `{"positions": ["Frontend_Developer", "AI_ML_Engineer"]}`. В `multipart/form-data` поле `positions` повторяется. `position` на переходный период только для чтения и равно первому из `positions`: так приходит в `me/`, `members/`, `members/{id}/` и везде, где участник вложен (`user`, `assignee`, `author`, `actor`).
+
 ### Участники (публичная витрина)
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `members/` | все | Только заполненные профили. Фильтры `?position=`, `?search=` (имя, фамилия, навыки) |
+| GET | `members/` | все | Только заполненные профили. Фильтры `?position=` (у кого это направление есть среди `positions`), `?search=` (имя, фамилия, навыки) |
 | GET | `members/{id}/` | все | Публичный профиль с резюме, командами и проектами |
 
 ### Пользователи (админка на фронте)
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `users/` | Admin | Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
+| GET | `users/` | Admin | `{id, username, first_name, last_name, avatar, role, status, is_active}`. Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
 | POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают все токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `avatar` - ссылка или `null`, только для чтения. `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают все токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
 
 ### Команды
 
@@ -148,7 +150,7 @@
       "priority": "Medium",
       "type": "Feature",
       "labels": ["frontend"],
-      "assignee": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "avatar": null},
+      "assignee": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "positions": ["Fullstack_Developer"], "avatar": null},
       "due_date": null,
       "order": 0
     }
@@ -193,8 +195,8 @@
   "priority": "High",
   "type": "Feature",
   "labels": ["frontend", "auth"],
-  "assignee": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
-  "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+  "assignee": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
+  "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
   "due_date": "2026-11-01",
   "order": 1,
   "created_at": "2026-10-22T13:42:40+06:00",
@@ -202,7 +204,7 @@
   "comments": [
     {
       "id": 2,
-      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
       "text": "Начал, сегодня закончу",
       "created_at": "2026-10-22T13:42:40+06:00"
     }
@@ -210,7 +212,7 @@
   "attachments": [
     {
       "id": 1,
-      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "author": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
       "file": "https://<домен>/api/ru/task-files/<подпись>/",
       "name": "screen.png",
       "created_at": "2026-10-22T14:01:02+06:00"
@@ -219,7 +221,7 @@
   "history": [
     {
       "id": 3,
-      "user": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+      "user": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
       "field": "status",
       "old_value": "To_do",
       "new_value": "In_progress",
@@ -229,7 +231,7 @@
 }
 ```
 
-У `assignee` и `author` те же поля, что у участника: `id, first_name, last_name, position, avatar`. `author` бывает `null`, если его аккаунт удалили.
+У `assignee` и `author` те же поля, что у участника: `id, first_name, last_name, position, positions, avatar`. `author` бывает `null`, если его аккаунт удалили.
 
 #### Изменить или перетащить
 
@@ -356,7 +358,7 @@
 {
   "id": 1,
   "type": "Mention",
-  "actor": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "avatar": null},
+  "actor": {"id": 4, "first_name": "Азамат", "last_name": "Кубанычбеков", "position": "Frontend_Developer", "positions": ["Frontend_Developer"], "avatar": null},
   "task": {"id": 4, "title": "Вход через Google", "project": {"id": 1, "name": "Motion LMS Platform"}},
   "comment": {"id": 2, "text": "@dev6 глянь вёрстку"},
   "is_read": false,
@@ -406,7 +408,7 @@
   "team": {"id": 1, "name": "Alpha Team", "image": null},
   "members": [
     {
-      "user": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "avatar": null},
+      "user": {"id": 2, "first_name": "Нурлан", "last_name": "Асанов", "position": "Fullstack_Developer", "positions": ["Fullstack_Developer"], "avatar": null},
       "role": "Team_Lead"
     }
   ]
@@ -438,5 +440,6 @@
 | глобальные роли `Team_Lead`, `Developer` | `Member` (тимлид - только внутри команды/проекта) |
 | роль в команде `Developer` | `Member` |
 | должность `UI/UX_Designer` | `UI_UX_Designer` |
+| одна должность `position` | список `positions`, `position` пока только для чтения = первое из `positions`; новое значение `AI_ML_Engineer` |
 | статусы заявки `New`, `Reviewing` | плюс `Accepted`, `Rejected` |
 | `/ru/docs/`, `/ru/docs.json` | `/api/docs/`, `/api/docs.json` |
