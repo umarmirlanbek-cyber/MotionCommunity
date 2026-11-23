@@ -156,8 +156,10 @@ class MemberDetailSerializer(serializers.ModelSerializer):
 class MeSerializer(MemberDetailSerializer):
     class Meta:
         model = UserProfile
-        fields = MemberDetailSerializer.Meta.fields + ('username', 'email', 'role', 'status', 'created_at')
-        read_only_fields = ('username', 'role', 'status')
+        fields = MemberDetailSerializer.Meta.fields + (
+            'username', 'email', 'role', 'status', 'show_on_showcase', 'created_at'
+        )
+        read_only_fields = ('username', 'role', 'status', 'show_on_showcase')
 
     def validate_positions(self, value):
         return list(dict.fromkeys(value))
@@ -176,7 +178,9 @@ class MeSerializer(MemberDetailSerializer):
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
-        fields = ('id', 'username', 'first_name', 'last_name', 'avatar', 'role', 'status', 'is_active')
+        fields = (
+            'id', 'username', 'first_name', 'last_name', 'avatar', 'role', 'status', 'is_active', 'show_on_showcase'
+        )
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -197,12 +201,14 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = UserProfile
         fields = (
             'id', 'username', 'password', 'email', 'first_name', 'last_name', 'avatar',
-            'role', 'status', 'is_active', 'created_at',
+            'role', 'status', 'is_active', 'show_on_showcase', 'created_at',
         )
         read_only_fields = ('avatar', 'status')
 
     def validate(self, attrs):
         demoted = attrs.get('role', self.instance.role) != RoleChoices.ADMIN
+        if demoted and 'show_on_showcase' in attrs:
+            raise serializers.ValidationError({'show_on_showcase': 'Только для администраторов'})
         if demoted or not attrs.get('is_active', self.instance.is_active):
             check_not_last_admin(self.instance)
         return attrs

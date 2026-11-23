@@ -75,7 +75,10 @@ class UserProfileManager(UserManager):
         return super().create_superuser(username, email, password, **extra_fields)
 
     def public(self):
-        return self.filter(role=RoleChoices.MEMBER, status=StatusChoices.ACTIVE, is_active=True)
+        return self.filter(
+            models.Q(role=RoleChoices.MEMBER) | models.Q(show_on_showcase=True),
+            status=StatusChoices.ACTIVE, is_active=True,
+        )
 
 
 class UserProfile(AbstractUser):
@@ -97,6 +100,7 @@ class UserProfile(AbstractUser):
     )
     role = models.CharField(max_length=20, choices=RoleChoices.choices, default=RoleChoices.MEMBER)
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.INACTIVE)
+    show_on_showcase = models.BooleanField('Показывать на витрине', default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = UserProfileManager()
@@ -114,6 +118,8 @@ class UserProfile(AbstractUser):
     def save(self, *args, **kwargs):
         self.is_staff = self.role == RoleChoices.ADMIN
         self.is_superuser = self.role == RoleChoices.ADMIN
+        if self.role != RoleChoices.ADMIN:
+            self.show_on_showcase = False
         password_changed = self.pk is not None and self._password is not None
         super().save(*args, **kwargs)
         if password_changed or not self.is_active:

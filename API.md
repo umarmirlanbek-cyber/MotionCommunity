@@ -47,8 +47,8 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status` |
-| PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role` и `status`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки. Направления - `positions`, см. ниже |
+| GET | `me/` | вошедший | Профиль целиком: поля профиля, `work`, `education`, `languages`, `certificates`, `teams`, `projects`, `username`, `email`, `role`, `status`, `show_on_showcase` (виден ли админ на витрине, только чтение) |
+| PATCH | `me/` | вошедший | Любые поля профиля, кроме `username`, `role`, `status` и `show_on_showcase`. Профиль становится `Active`, когда заполнено имя, «о себе» или навыки. Направления - `positions`, см. ниже |
 | DELETE | `me/` | вошедший | Удалить свой аккаунт. Человек пропадёт из команд и проектов |
 | POST | `me/password/` | вошедший | `{old_password, new_password}`. Все токены, и refresh, и текущий access, сразу перестают работать (`401`): после смены пароля войдите заново |
 | POST | `me/work/` | вошедший | Добавить опыт работы: `{company, position, start_date, end_date, working_format, achievements}` → запись с `id` |
@@ -65,16 +65,16 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `members/` | все | Только заполненные профили. Фильтры `?position=` (у кого это направление есть среди `positions`), `?search=` (имя, фамилия, навыки) |
-| GET | `members/{id}/` | все | Публичный профиль с резюме, командами и проектами |
+| GET | `members/` | все | Только заполненные профили (`status: Active`) участников и админов с `show_on_showcase: true`. Фильтры `?position=` (у кого это направление есть среди `positions`), `?search=` (имя, фамилия, навыки) |
+| GET | `members/{id}/` | все | Публичный профиль с резюме, командами и проектами. Кого нет в `members/`, тот → `404` |
 
 ### Пользователи (админка на фронте)
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `users/` | Admin | `{id, username, first_name, last_name, avatar, role, status, is_active}`. Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
+| GET | `users/` | Admin | `{id, username, first_name, last_name, avatar, role, status, is_active, show_on_showcase}`. Фильтры `?role=`, `?status=`, `?is_active=`, `?search=` |
 | POST | `users/` | Admin | `{username, password, role}` - выдать логин новому участнику |
-| GET, PATCH, DELETE | `users/{id}/` | Admin | `avatar` - ссылка или `null`, только для чтения. `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают все токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
+| GET, PATCH, DELETE | `users/{id}/` | Admin | `avatar` - ссылка или `null`, только для чтения. `show_on_showcase: true` - показывать админа на витрине (в том числе себя), по умолчанию `false`. Для участника это поле → `400 {"show_on_showcase": ["Только для администраторов"]}`, при понижении до `Member` флаг сбрасывается. `is_active: false` - заблокировать без удаления. Новый `password` или блокировка отзывают все токены пользователя. Последнего Admin нельзя удалить, понизить или заблокировать → `400` (так же для `DELETE me/`) |
 
 ### Команды
 
@@ -386,7 +386,7 @@
 
 | Метод | Путь | Кто | Что |
 | --- | --- | --- | --- |
-| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`. Компании - только по принятым заявкам. Цифры обновляются раз в минуту |
+| GET | `stats/` | все | `{members_count, teams_count, projects_count, companies_count}`, `members_count` - сколько людей в `members/`. Компании - только по принятым заявкам. Цифры обновляются раз в минуту |
 | GET | `choices/` | все | Все варианты выбора: `[{value, label}]` |
 | GET | `health/` | все | `{"status": "ok"}` или `503`, если база недоступна. Для проверки сервера |
 
