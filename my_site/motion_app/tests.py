@@ -314,7 +314,7 @@ class MembersTests(MotionTestCase):
         response = self.client.get(f'/api/ru/members/{self.active.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['work'][0]['company'], 'Motion')
-        self.assertNotIn('role', response.data)
+        self.assertFalse({'username', 'email', 'status', 'show_on_showcase'} & response.data.keys())
 
     def test_admin_on_showcase_only_with_flag(self):
         UserProfile.objects.filter(pk=self.admin.pk).update(first_name='Бекбол', positions=['AI_ML_Engineer'])
@@ -341,6 +341,13 @@ class MembersTests(MotionTestCase):
         self.assertEqual(showcase(), (True, True, status.HTTP_200_OK, 2))
         UserProfile.objects.filter(pk=self.admin.pk).update(status=StatusChoices.INACTIVE)
         self.assertEqual(showcase(), (False, False, status.HTTP_404_NOT_FOUND, 1))
+
+    def test_members_show_role(self):
+        UserProfile.objects.filter(pk=self.admin.pk).update(show_on_showcase=True)
+        roles = {member['id']: member['role'] for member in self.client.get('/api/ru/members/').data['results']}
+        self.assertEqual(roles, {self.active.id: RoleChoices.MEMBER, self.admin.id: RoleChoices.ADMIN})
+        self.assertEqual(self.client.get(f'/api/ru/members/{self.admin.id}/').data['role'], RoleChoices.ADMIN)
+        self.assertEqual(self.client.get(f'/api/ru/members/{self.active.id}/').data['role'], RoleChoices.MEMBER)
 
     def test_filter_by_any_of_positions(self):
         UserProfile.objects.filter(pk=self.active.pk).update(positions=['Frontend_Developer', 'AI_ML_Engineer'])
