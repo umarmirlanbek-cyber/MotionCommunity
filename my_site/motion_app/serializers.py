@@ -109,7 +109,7 @@ class MemberShortSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ('id', 'first_name', 'last_name', 'position', 'positions', 'avatar')
+        fields = ('id', 'first_name', 'last_name', 'position', 'positions', 'avatar', 'role')
 
 
 class MemberTeamSerializer(serializers.ModelSerializer):
@@ -145,7 +145,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = (
-            'id', 'first_name', 'last_name', 'avatar', 'bio', 'position', 'positions',
+            'id', 'first_name', 'last_name', 'avatar', 'role', 'bio', 'position', 'positions',
             'skills', 'github', 'linkedin', 'portfolio', 'resume',
             'work', 'education', 'languages', 'certificates', 'teams', 'projects',
         )
@@ -157,7 +157,7 @@ class MeSerializer(MemberDetailSerializer):
     class Meta:
         model = UserProfile
         fields = MemberDetailSerializer.Meta.fields + (
-            'username', 'email', 'role', 'status', 'show_on_showcase', 'created_at'
+            'username', 'email', 'status', 'show_on_showcase', 'created_at'
         )
         read_only_fields = ('username', 'role', 'status', 'show_on_showcase')
 
